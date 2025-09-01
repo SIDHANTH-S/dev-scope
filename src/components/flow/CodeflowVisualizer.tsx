@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import {
   ReactFlow,
   MiniMap,
@@ -13,9 +13,11 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import CodeNode from './CodeNode';
+import FilterControls from './FilterControls';
+import { applyHierarchicalLayout } from './layouts/HierarchicalLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ZoomIn, ZoomOut, Maximize2, RotateCcw } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, RotateCcw, Filter } from 'lucide-react';
 
 const nodeTypes = {
   codeNode: CodeNode,
@@ -63,26 +65,44 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [visibleEdgeTypes, setVisibleEdgeTypes] = useState<Set<string>>(new Set());
+  const [visibleNodeTypes, setVisibleNodeTypes] = useState<Set<string>>(new Set());
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // Initialize visible types
+  useEffect(() => {
+    if (graphData.metadata) {
+      setVisibleEdgeTypes(new Set(graphData.metadata.edge_types));
+      setVisibleNodeTypes(new Set(graphData.metadata.node_types));
+    }
+  }, [graphData.metadata]);
 
   // Convert backend data to React Flow format
   useEffect(() => {
     if (!graphData.nodes || !graphData.edges) return;
 
-    // Convert nodes
-    const flowNodes: Node[] = graphData.nodes.map((node, index) => ({
+    // Convert nodes with importance calculation
+    const flowNodes: Node[] = graphData.nodes.map((node) => ({
       id: node.id,
       type: 'codeNode',
-      position: { 
-        x: (index % 6) * 300 + Math.random() * 100, 
-        y: Math.floor(index / 6) * 200 + Math.random() * 50 
-      },
+      position: { x: 0, y: 0 }, // Will be set by layout algorithm
       data: {
         name: node.name,
         type: node.type,
         file: node.file,
-        metadata: node.metadata
+        metadata: node.metadata,
+        importance: node.metadata?.is_entry ? 10 : Math.random() * 5 + 1
       }
     }));
+
+    // Apply hierarchical layout
+    const layoutedNodes = applyHierarchicalLayout(flowNodes, graphData.edges.map((edge, index) => ({
+      id: `edge-${index}`,
+      source: edge.source,
+      target: edge.target,
+      type: 'smoothstep'
+    })));
 
     // Convert edges
     const flowEdges: Edge[] = graphData.edges.map((edge, index) => ({
@@ -100,10 +120,11 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
       labelBgStyle: { 
         fill: 'hsl(var(--background))', 
         fillOpacity: 0.8 
-      }
+      },
+      animated: edge.type === 'routes_to' || edge.type === 'calls_api'
     }));
 
-    setNodes(flowNodes);
+    setNodes(layoutedNodes);
     setEdges(flowEdges);
   }, [graphData, setNodes, setEdges]);
 
@@ -115,31 +136,72 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
   }, []);
 
   const handleLayout = useCallback(() => {
-    if (!reactFlowInstance) return;
+    if (!reactFlowInstance || !graphData.nodes || !graphData.edges) return;
     
-    // Simple force-based layout
-    const layoutedNodes = nodes.map((node, index) => {
-      const angle = (index / nodes.length) * 2 * Math.PI;
-      const radius = Math.min(300, nodes.length * 30);
-      
-      return {
-        ...node,
-        position: {
-          x: Math.cos(angle) * radius + 400,
-          y: Math.sin(angle) * radius + 300
-        }
-      };
-    });
-    
+    // Re-apply hierarchical layout
+    const layoutedNodes = applyHierarchicalLayout(nodes, edges);
     setNodes(layoutedNodes);
     setTimeout(() => reactFlowInstance.fitView({ padding: 0.1 }), 100);
-  }, [nodes, setNodes, reactFlowInstance]);
+  }, [nodes, edges, setNodes, reactFlowInstance, graphData]);
 
   const handleFitView = useCallback(() => {
     if (reactFlowInstance) {
       reactFlowInstance.fitView({ padding: 0.1 });
     }
   }, [reactFlowInstance]);
+
+  // Filter nodes and edges based on search and visibility settings
+  const filteredNodes = useMemo(() => {
+    return nodes.filter(node => {
+      const matchesSearch = searchTerm === '' || 
+        node.data?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        node.data?.file?.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesType = visibleNodeTypes.has(node.data?.type || '');
+      
+      return matchesSearch && matchesType;
+    });
+  }, [nodes, searchTerm, visibleNodeTypes]);
+
+  const filteredEdges = useMemo(() => {
+    return edges.filter(edge => {
+      const edgeTypeFromLabel = edge.label || edge.type || '';
+      return visibleEdgeTypes.has(edgeTypeFromLabel);
+    });
+  }, [edges, visibleEdgeTypes]);
+
+  // Filter control handlers
+  const handleEdgeTypeToggle = useCallback((type: string) => {
+    setVisibleEdgeTypes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(type)) {
+        newSet.delete(type);
+      } else {
+        newSet.add(type);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const handleNodeTypeToggle = useCallback((type: string) => {
+    setVisibleNodeTypes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(type)) {
+        newSet.delete(type);
+      } else {
+        newSet.add(type);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const handleShowAllEdges = useCallback(() => {
+    setVisibleEdgeTypes(new Set(graphData.metadata?.edge_types || []));
+  }, [graphData.metadata]);
+
+  const handleHideAllEdges = useCallback(() => {
+    setVisibleEdgeTypes(new Set());
+  }, []);
 
   return (
     <div className="w-full h-full relative">
@@ -161,6 +223,15 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
         <Button
           variant="outline"
           size="sm"
+          onClick={() => setShowFilters(!showFilters)}
+          className="bg-background/80 backdrop-blur-sm"
+        >
+          <Filter className="w-4 h-4" />
+          Filters
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
           onClick={handleLayout}
           className="bg-background/80 backdrop-blur-sm"
         >
@@ -177,6 +248,22 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
           Fit View
         </Button>
       </div>
+
+      {/* Filter Controls */}
+      {showFilters && (
+        <FilterControls
+          edgeTypes={graphData.metadata?.edge_types || []}
+          nodeTypes={graphData.metadata?.node_types || []}
+          visibleEdgeTypes={visibleEdgeTypes}
+          visibleNodeTypes={visibleNodeTypes}
+          searchTerm={searchTerm}
+          onEdgeTypeToggle={handleEdgeTypeToggle}
+          onNodeTypeToggle={handleNodeTypeToggle}
+          onSearchChange={setSearchTerm}
+          onShowAllEdges={handleShowAllEdges}
+          onHideAllEdges={handleHideAllEdges}
+        />
+      )}
 
       {/* Legend */}
       <div className="absolute bottom-4 left-4 z-10 bg-background/80 backdrop-blur-sm rounded-lg p-3 border">
@@ -201,8 +288,8 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
       </div>
 
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={filteredNodes}
+        edges={filteredEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onInit={onInit}
