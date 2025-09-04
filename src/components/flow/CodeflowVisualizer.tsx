@@ -15,7 +15,7 @@ import '@xyflow/react/dist/style.css';
 import CodeNode from './CodeNode';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ZoomIn, ZoomOut, Maximize2, RotateCcw } from 'lucide-react';
+import { Maximize2, RotateCcw } from 'lucide-react';
 
 const nodeTypes = {
   codeNode: CodeNode,
@@ -23,20 +23,20 @@ const nodeTypes = {
 
 interface CodeflowVisualizerProps {
   graphData: {
-    nodes: Array<{
+    nodes?: Array<{
       id: string;
       type: string;
       file: string;
       name: string;
       metadata?: any;
     }>;
-    edges: Array<{
+    edges?: Array<{
       source: string;
       target: string;
       type: string;
       metadata?: any;
     }>;
-    metadata: {
+    metadata?: {
       total_nodes: number;
       total_edges: number;
       node_types: string[];
@@ -66,46 +66,57 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
 
   // Convert backend data to React Flow format
   useEffect(() => {
-    if (!graphData.nodes || !graphData.edges) return;
-
-    // Convert nodes
-    const flowNodes: Node[] = graphData.nodes.map((node, index) => ({
-      id: node.id,
-      type: 'codeNode',
-      position: { 
-        x: (index % 6) * 300 + Math.random() * 100, 
-        y: Math.floor(index / 6) * 200 + Math.random() * 50 
-      },
-      data: {
-        name: node.name,
-        type: node.type,
-        file: node.file,
-        metadata: node.metadata
-      }
-    }));
-
-    // Convert edges
-    const flowEdges: Edge[] = graphData.edges.map((edge, index) => ({
-      id: `edge-${index}`,
-      source: edge.source,
-      target: edge.target,
-      type: 'smoothstep',
-      style: getEdgeStyle(edge.type),
-      label: edge.type,
-      labelStyle: { 
-        fontSize: 10, 
-        fontWeight: 600,
-        color: 'hsl(var(--muted-foreground))'
-      },
-      labelBgStyle: { 
-        fill: 'hsl(var(--background))', 
-        fillOpacity: 0.8 
-      }
-    }));
-
+    if (!graphData?.nodes || !graphData?.edges) {
+      setNodes([]);
+      setEdges([]);
+      return;
+    }
+  
+    // Deduplicate nodes
+    const seen = new Set<string>();
+    const flowNodes: Node[] = graphData.nodes
+      .filter((n) => {
+        if (seen.has(n.id)) return false;
+        seen.add(n.id);
+        return true;
+      })
+      .map((node, index) => ({
+        id: node.id, // ✅ keep backend ID
+        type: 'codeNode',
+        position: {
+          x: (index % 6) * 300 + Math.random() * 100,
+          y: Math.floor(index / 6) * 200 + Math.random() * 50,
+        },
+        data: {
+          name: node.name,
+          type: node.type,
+          file: node.file,
+          metadata: node.metadata,
+        },
+      }));
+  
+    // ✅ Build a lookup of node IDs
+    const nodeIds = new Set(flowNodes.map((n) => n.id));
+  
+    // Convert edges but keep only valid ones
+    const flowEdges: Edge[] = graphData.edges
+      .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+      .map((edge, index) => ({
+        id: `edge-${index}`,
+        source: edge.source,
+        target: edge.target,
+        type: 'smoothstep',
+        style: getEdgeStyle(edge.type),
+        label: edge.type,
+      }));
+  
+    console.log("Flow Nodes:", flowNodes);
+    console.log("Flow Edges:", flowEdges);
+  
     setNodes(flowNodes);
     setEdges(flowEdges);
   }, [graphData, setNodes, setEdges]);
+  
 
   const onInit = useCallback((reactFlowInstance: any) => {
     setReactFlowInstance(reactFlowInstance);
@@ -115,9 +126,9 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
   }, []);
 
   const handleLayout = useCallback(() => {
-    if (!reactFlowInstance) return;
+    if (!reactFlowInstance || nodes.length === 0) return;
     
-    // Simple force-based layout
+    // Simple radial layout
     const layoutedNodes = nodes.map((node, index) => {
       const angle = (index / nodes.length) * 2 * Math.PI;
       const radius = Math.min(300, nodes.length * 30);
@@ -146,13 +157,13 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
       {/* Graph Statistics */}
       <div className="absolute top-4 left-4 z-10 flex gap-2 flex-wrap">
         <Badge variant="secondary" className="bg-background/80 backdrop-blur-sm">
-          {graphData.metadata.total_nodes} nodes
+          {graphData?.metadata?.total_nodes ?? 0} nodes
         </Badge>
         <Badge variant="secondary" className="bg-background/80 backdrop-blur-sm">
-          {graphData.metadata.total_edges} edges
+          {graphData?.metadata?.total_edges ?? 0} edges
         </Badge>
         <Badge variant="outline" className="bg-background/80 backdrop-blur-sm">
-          {graphData.metadata.node_types.length} types
+          {graphData?.metadata?.node_types?.length ?? 0} types
         </Badge>
       </div>
 
@@ -179,26 +190,28 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
       </div>
 
       {/* Legend */}
-      <div className="absolute bottom-4 left-4 z-10 bg-background/80 backdrop-blur-sm rounded-lg p-3 border">
-        <h4 className="text-sm font-semibold mb-2">Node Types</h4>
-        <div className="grid grid-cols-2 gap-1 text-xs">
-          {graphData.metadata.node_types.map((type) => (
-            <div key={type} className="flex items-center gap-2">
-              <div className={`w-3 h-3 rounded border-l-2 ${
-                type === 'component' ? 'border-l-[hsl(var(--code-component))]' :
-                type === 'class' ? 'border-l-[hsl(var(--code-class))]' :
-                type === 'function' ? 'border-l-[hsl(var(--code-function))]' :
-                type === 'api_endpoint' ? 'border-l-[hsl(var(--code-api))]' :
-                type === 'module' ? 'border-l-[hsl(var(--code-module))]' :
-                type === 'controller' ? 'border-l-[hsl(var(--code-controller))]' :
-                type === 'service' ? 'border-l-[hsl(var(--code-service))]' :
-                'border-l-[hsl(var(--code-view))]'
-              }`} />
-              <span>{type}</span>
-            </div>
-          ))}
+      {graphData?.metadata?.node_types && (
+        <div className="absolute bottom-4 left-4 z-10 bg-background/80 backdrop-blur-sm rounded-lg p-3 border">
+          <h4 className="text-sm font-semibold mb-2">Node Types</h4>
+          <div className="grid grid-cols-2 gap-1 text-xs">
+            {graphData.metadata.node_types.map((type) => (
+              <div key={type} className="flex items-center gap-2">
+                <div className={`w-3 h-3 rounded border-l-2 ${
+                  type === 'component' ? 'border-l-[hsl(var(--code-component))]' :
+                  type === 'class' ? 'border-l-[hsl(var(--code-class))]' :
+                  type === 'function' ? 'border-l-[hsl(var(--code-function))]' :
+                  type === 'api_endpoint' ? 'border-l-[hsl(var(--code-api))]' :
+                  type === 'module' ? 'border-l-[hsl(var(--code-module))]' :
+                  type === 'controller' ? 'border-l-[hsl(var(--code-controller))]' :
+                  type === 'service' ? 'border-l-[hsl(var(--code-service))]' :
+                  'border-l-[hsl(var(--code-view))]'
+                }`} />
+                <span>{type}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <ReactFlow
         nodes={nodes}

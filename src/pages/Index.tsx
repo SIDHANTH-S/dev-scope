@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,13 +16,17 @@ const Index = () => {
   const [apiStatus, setApiStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const { toast } = useToast();
 
-  React.useEffect(() => {
+  useEffect(() => {
     checkApi();
   }, []);
 
   const checkApi = async () => {
-    const isHealthy = await checkApiHealth();
-    setApiStatus(isHealthy ? 'online' : 'offline');
+    try {
+      const isHealthy = await checkApiHealth();
+      setApiStatus(isHealthy ? 'online' : 'offline');
+    } catch {
+      setApiStatus('offline');
+    }
   };
 
   const handleAnalyze = async () => {
@@ -39,9 +43,10 @@ const Index = () => {
     try {
       const result = await analyzeCodebase(projectPath.trim());
       setAnalysisResult(result);
+
       toast({
         title: "Analysis Complete",
-        description: `Found ${result.graph.metadata.total_nodes} nodes and ${result.graph.metadata.total_edges} relationships`,
+        description: `Found ${result?.graph?.metadata?.total_nodes ?? 0} nodes and ${result?.graph?.metadata?.total_edges ?? 0} relationships`,
       });
     } catch (error) {
       toast({
@@ -60,6 +65,19 @@ const Index = () => {
   };
 
   if (analysisResult) {
+    const projectPathValue =
+      analysisResult?.project_info?.path ||
+      analysisResult?.graph?.path ||
+      '';
+
+    const projectType =
+      analysisResult?.project_info?.type ||
+      analysisResult?.graph?.type ||
+      'Unknown';
+
+    const projectName =
+      projectPathValue?.split(/[\\/]/).pop() || 'Project';
+
     return (
       <div className="h-screen flex flex-col">
         {/* Header */}
@@ -77,19 +95,19 @@ const Index = () => {
                 </Button>
                 <div className="flex flex-col">
                   <h1 className="text-lg font-semibold">
-                    {analysisResult.project_info.path.split('/').pop() || 'Project'}
+                    {projectName}
                   </h1>
                   <p className="text-sm text-muted-foreground">
-                    {analysisResult.project_info.type} • {analysisResult.project_info.path}
+                    {projectType} • {projectPathValue || 'N/A'}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="secondary">
-                  {analysisResult.graph.metadata.total_nodes} nodes
+                  {analysisResult?.graph?.metadata?.total_nodes ?? 0} nodes
                 </Badge>
                 <Badge variant="secondary">
-                  {analysisResult.graph.metadata.total_edges} edges
+                  {analysisResult?.graph?.metadata?.total_edges ?? 0} edges
                 </Badge>
               </div>
             </div>
@@ -98,7 +116,7 @@ const Index = () => {
 
         {/* Visualization */}
         <div className="flex-1">
-          <CodeflowVisualizer graphData={analysisResult.graph} />
+          <CodeflowVisualizer graphData={analysisResult?.graph || { nodes: [], edges: [], metadata: { total_nodes: 0, total_edges: 0, node_types: [], edge_types: [] } }} />
         </div>
       </div>
     );

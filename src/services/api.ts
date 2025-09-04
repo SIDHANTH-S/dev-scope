@@ -41,15 +41,35 @@ export interface CodebaseAnalysisResult {
 
 export const analyzeCodebase = async (folderPath: string): Promise<CodebaseAnalysisResult> => {
   try {
-    const response = await axios.post(`${API_BASE_URL}/parse`, {
-      folder_path: folderPath
+    // Step 1: submit job
+    const { data: jobData } = await axios.post(`${API_BASE_URL}/parse`, {
+      folder_path: folderPath,
     });
-    return response.data;
+
+    const jobId = jobData.job_id;
+    console.log("Job submitted:", jobId);
+
+    // Step 2: poll until complete
+    let statusData;
+    while (true) {
+      const { data } = await axios.get(`${API_BASE_URL}/status/${jobId}`);
+      console.log("Job status:", data);
+
+      if (data.status === "completed") {
+        statusData = data.result;
+        break;
+      } else if (data.status === "failed") {
+        throw new Error("Analysis failed");
+      }
+      await new Promise(res => setTimeout(res, 2000)); // wait before retry
+    }
+
+    return statusData;
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      throw new Error(error.response?.data?.error || 'Failed to analyze codebase');
+      throw new Error(error.response?.data?.error || "Failed to analyze codebase");
     }
-    throw new Error('Network error occurred');
+    throw new Error("Network error occurred");
   }
 };
 

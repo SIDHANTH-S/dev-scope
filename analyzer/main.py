@@ -93,14 +93,20 @@ class CodebaseAnalyzer:
             )
             graph_data = graph_generator.generate()
             
+            project_name = self._derive_project_name(folder_path)
+            language, framework = self._derive_language_and_framework(self.project_type)
+
             result = {
                 "project_info": {
+                    "name": project_name,
                     "path": folder_path,
                     "type": self.project_type.value,
-                    "config_files": scan_results["config_files"],
-                    "entry_points": entry_points
+                    "language": language,
+                    "framework": framework,
+                    "config_files": scan_results.get("config_files", []),
+                    "entry_points": entry_points or []
                 },
-                "graph": graph_data
+                "graph": graph_data or {"nodes": [], "edges": [], "metadata": {"total_nodes": 0, "total_edges": 0, "node_types": [], "edge_types": []}}
             }
             
             logging.info(f"Analysis complete. Generated {graph_data['metadata']['total_nodes']} nodes "
@@ -140,3 +146,23 @@ class CodebaseAnalyzer:
         # Fallback to first detected type
         self.project_type = list(self.scanner.detected_types)[0]
         logging.info(f"Using fallback project type: {self.project_type.value}")
+
+    def _derive_project_name(self, folder_path: str) -> str:
+        try:
+            return folder_path.rstrip("/\\").split(os.sep)[-1]
+        except Exception:
+            return "unknown_project"
+
+    def _derive_language_and_framework(self, project_type: ProjectType) -> (str, str):
+        mapping = {
+            ProjectType.REACT_VITE: ("typescript", "react"),
+            ProjectType.ANGULAR: ("typescript", "angular"),
+            ProjectType.EXPRESS_NODE: ("javascript", "express"),
+            ProjectType.DJANGO: ("python", "django"),
+            ProjectType.PYTHON_APP: ("python", "python"),
+            ProjectType.SPRING_BOOT: ("java", "spring_boot"),
+            ProjectType.MAVEN_JAVA: ("java", "java"),
+            ProjectType.GRADLE_JAVA: ("java", "java"),
+            ProjectType.ANDROID: ("java", "android"),
+        }
+        return mapping.get(project_type, ("unknown", "unknown"))
