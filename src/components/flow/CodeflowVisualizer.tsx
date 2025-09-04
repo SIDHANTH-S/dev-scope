@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ReactFlow,
   MiniMap,
@@ -9,12 +9,10 @@ import {
   Node,
   Edge,
   ConnectionMode,
-  BackgroundVariant
+  BackgroundVariant,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import CodeNode from './CodeNode';
-import FilterControls from './FilterControls';
-import { applyHierarchicalLayout } from './layouts/HierarchicalLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Maximize2, RotateCcw } from 'lucide-react';
@@ -56,7 +54,7 @@ const getEdgeStyle = (edgeType: string) => {
     routes_to: { stroke: 'hsl(var(--primary))', strokeWidth: 3 },
     calls_api: { stroke: 'hsl(var(--code-api))', strokeWidth: 2 },
     depends_on: { stroke: 'hsl(var(--muted-foreground))', strokeWidth: 1, strokeDasharray: '3,3' },
-    uses: { stroke: 'hsl(var(--accent))', strokeWidth: 2 }
+    uses: { stroke: 'hsl(var(--accent))', strokeWidth: 2 },
   };
   return styles[edgeType as keyof typeof styles] || { stroke: 'hsl(var(--border))', strokeWidth: 1 };
 };
@@ -65,18 +63,7 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
-  const [showFilters, setShowFilters] = useState(false);
-  const [visibleEdgeTypes, setVisibleEdgeTypes] = useState<Set<string>>(new Set());
-  const [visibleNodeTypes, setVisibleNodeTypes] = useState<Set<string>>(new Set());
-  const [searchTerm, setSearchTerm] = useState('');
-
-  // Initialize visible types
-  useEffect(() => {
-    if (graphData.metadata) {
-      setVisibleEdgeTypes(new Set(graphData.metadata.edge_types));
-      setVisibleNodeTypes(new Set(graphData.metadata.node_types));
-    }
-  }, [graphData.metadata]);
+  const [viewLevel, setViewLevel] = useState<'system' | 'container' | 'component' | 'code' | 'all'>('container');
 
   // Convert backend data to React Flow format
   useEffect(() => {
@@ -85,8 +72,7 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
       setEdges([]);
       return;
     }
-  
-    // Deduplicate nodes
+
     const seen = new Set<string>();
     const flowNodes: Node[] = graphData.nodes
       .filter((n) => {
@@ -95,7 +81,7 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
         return true;
       })
       .map((node, index) => ({
-        id: node.id, // ✅ keep backend ID
+        id: node.id,
         type: 'codeNode',
         position: {
           x: (index % 6) * 300 + Math.random() * 100,
@@ -108,29 +94,28 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
           metadata: node.metadata,
         },
       }));
-  
-    // ✅ Build a lookup of node IDs
-    const nodeIds = new Set(flowNodes.map((n) => n.id));
-  
-    // Convert edges but keep only valid ones
-    const flowEdges: Edge[] = graphData.edges
-      .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
-      .map((edge, index) => ({
-        id: `edge-${index}`,
-        source: edge.source,
-        target: edge.target,
-        type: 'smoothstep',
-        style: getEdgeStyle(edge.type),
-        label: edge.type,
-      }));
-  
-    console.log("Flow Nodes:", flowNodes);
-    console.log("Flow Edges:", flowEdges);
-  
+
+    const flowEdges: Edge[] = graphData.edges.map((edge, index) => ({
+      id: `edge-${index}`,
+      source: edge.source,
+      target: edge.target,
+      type: 'smoothstep',
+      style: getEdgeStyle(edge.type),
+      label: edge.type,
+    }));
+
     setNodes(flowNodes);
     setEdges(flowEdges);
   }, [graphData, setNodes, setEdges]);
-  
+
+  // Filter nodes/edges based on C4 view level
+  const filteredNodes = nodes.filter(
+    (n) => viewLevel === 'all' || n.data.metadata?.c4_level === viewLevel
+  );
+
+  const filteredEdges = edges.filter(
+    (e) => filteredNodes.find((n) => n.id === e.source) && filteredNodes.find((n) => n.id === e.target)
+  );
 
   const onInit = useCallback((reactFlowInstance: any) => {
     setReactFlowInstance(reactFlowInstance);
@@ -140,25 +125,24 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
   }, []);
 
   const handleLayout = useCallback(() => {
-    if (!reactFlowInstance || nodes.length === 0) return;
-    
-    // Simple radial layout
-    const layoutedNodes = nodes.map((node, index) => {
-      const angle = (index / nodes.length) * 2 * Math.PI;
-      const radius = Math.min(300, nodes.length * 30);
-      
+    if (!reactFlowInstance || filteredNodes.length === 0) return;
+
+    const layoutedNodes = filteredNodes.map((node, index) => {
+      const angle = (index / filteredNodes.length) * 2 * Math.PI;
+      const radius = Math.min(300, filteredNodes.length * 30);
+
       return {
         ...node,
         position: {
           x: Math.cos(angle) * radius + 400,
-          y: Math.sin(angle) * radius + 300
-        }
+          y: Math.sin(angle) * radius + 300,
+        },
       };
     });
-    
+
     setNodes(layoutedNodes);
     setTimeout(() => reactFlowInstance.fitView({ padding: 0.1 }), 100);
-  }, [nodes, edges, setNodes, reactFlowInstance, graphData]);
+  }, [filteredNodes, setNodes, reactFlowInstance]);
 
   const handleFitView = useCallback(() => {
     if (reactFlowInstance) {
@@ -166,85 +150,34 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
     }
   }, [reactFlowInstance]);
 
-  // Filter nodes and edges based on search and visibility settings
-  const filteredNodes = useMemo(() => {
-    return nodes.filter(node => {
-      const matchesSearch = searchTerm === '' || 
-        node.data?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        node.data?.file?.toLowerCase().includes(searchTerm.toLowerCase());
-      
-      const matchesType = visibleNodeTypes.has(node.data?.type || '');
-      
-      return matchesSearch && matchesType;
-    });
-  }, [nodes, searchTerm, visibleNodeTypes]);
-
-  const filteredEdges = useMemo(() => {
-    return edges.filter(edge => {
-      const edgeTypeFromLabel = edge.label || edge.type || '';
-      return visibleEdgeTypes.has(edgeTypeFromLabel);
-    });
-  }, [edges, visibleEdgeTypes]);
-
-  // Filter control handlers
-  const handleEdgeTypeToggle = useCallback((type: string) => {
-    setVisibleEdgeTypes(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(type)) {
-        newSet.delete(type);
-      } else {
-        newSet.add(type);
-      }
-      return newSet;
-    });
-  }, []);
-
-  const handleNodeTypeToggle = useCallback((type: string) => {
-    setVisibleNodeTypes(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(type)) {
-        newSet.delete(type);
-      } else {
-        newSet.add(type);
-      }
-      return newSet;
-    });
-  }, []);
-
-  const handleShowAllEdges = useCallback(() => {
-    setVisibleEdgeTypes(new Set(graphData.metadata?.edge_types || []));
-  }, [graphData.metadata]);
-
-  const handleHideAllEdges = useCallback(() => {
-    setVisibleEdgeTypes(new Set());
-  }, []);
-
   return (
     <div className="w-full h-full relative">
       {/* Graph Statistics */}
       <div className="absolute top-4 left-4 z-10 flex gap-2 flex-wrap">
         <Badge variant="secondary" className="bg-background/80 backdrop-blur-sm">
-          {graphData?.metadata?.total_nodes ?? 0} nodes
+          {filteredNodes.length} nodes
         </Badge>
         <Badge variant="secondary" className="bg-background/80 backdrop-blur-sm">
-          {graphData?.metadata?.total_edges ?? 0} edges
+          {filteredEdges.length} edges
         </Badge>
         <Badge variant="outline" className="bg-background/80 backdrop-blur-sm">
-          {graphData?.metadata?.node_types?.length ?? 0} types
+          View: {viewLevel}
         </Badge>
       </div>
 
-      {/* Layout Controls */}
-      <div className="absolute top-4 right-4 z-10 flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowFilters(!showFilters)}
-          className="bg-background/80 backdrop-blur-sm"
-        >
-          <Filter className="w-4 h-4" />
-          Filters
-        </Button>
+      {/* Layout + Level Controls */}
+      <div className="absolute top-4 right-4 z-10 flex gap-2 flex-wrap">
+        {['system', 'container', 'component', 'code', 'all'].map((level) => (
+          <Button
+            key={level}
+            variant={viewLevel === level ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setViewLevel(level as any)}
+            className="bg-background/80 backdrop-blur-sm capitalize"
+          >
+            {level}
+          </Button>
+        ))}
         <Button
           variant="outline"
           size="sm"
@@ -265,46 +198,6 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
         </Button>
       </div>
 
-      {/* Filter Controls */}
-      {showFilters && (
-        <FilterControls
-          edgeTypes={graphData.metadata?.edge_types || []}
-          nodeTypes={graphData.metadata?.node_types || []}
-          visibleEdgeTypes={visibleEdgeTypes}
-          visibleNodeTypes={visibleNodeTypes}
-          searchTerm={searchTerm}
-          onEdgeTypeToggle={handleEdgeTypeToggle}
-          onNodeTypeToggle={handleNodeTypeToggle}
-          onSearchChange={setSearchTerm}
-          onShowAllEdges={handleShowAllEdges}
-          onHideAllEdges={handleHideAllEdges}
-        />
-      )}
-
-      {/* Legend */}
-      {graphData?.metadata?.node_types && (
-        <div className="absolute bottom-4 left-4 z-10 bg-background/80 backdrop-blur-sm rounded-lg p-3 border">
-          <h4 className="text-sm font-semibold mb-2">Node Types</h4>
-          <div className="grid grid-cols-2 gap-1 text-xs">
-            {graphData.metadata.node_types.map((type) => (
-              <div key={type} className="flex items-center gap-2">
-                <div className={`w-3 h-3 rounded border-l-2 ${
-                  type === 'component' ? 'border-l-[hsl(var(--code-component))]' :
-                  type === 'class' ? 'border-l-[hsl(var(--code-class))]' :
-                  type === 'function' ? 'border-l-[hsl(var(--code-function))]' :
-                  type === 'api_endpoint' ? 'border-l-[hsl(var(--code-api))]' :
-                  type === 'module' ? 'border-l-[hsl(var(--code-module))]' :
-                  type === 'controller' ? 'border-l-[hsl(var(--code-controller))]' :
-                  type === 'service' ? 'border-l-[hsl(var(--code-service))]' :
-                  'border-l-[hsl(var(--code-view))]'
-                }`} />
-                <span>{type}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       <ReactFlow
         nodes={filteredNodes}
         edges={filteredEdges}
@@ -317,19 +210,19 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
         attributionPosition="bottom-right"
         className="react-flow-container"
       >
-        <Controls 
+        <Controls
           showZoom={true}
           showFitView={true}
           showInteractive={true}
           className="react-flow__controls"
         />
-        <MiniMap 
-          nodeStrokeColor={(n) => getEdgeStyle((n.data as any)?.type || 'default').stroke as string || '#fff'}
-          nodeColor={(n) => getEdgeStyle((n.data as any)?.type || 'default').stroke as string || '#fff'}
+        <MiniMap
+          nodeStrokeColor={(n) => getEdgeStyle((n.data as any)?.type || 'default').stroke as string}
+          nodeColor={(n) => getEdgeStyle((n.data as any)?.type || 'default').stroke as string}
           nodeBorderRadius={8}
           className="react-flow__minimap"
         />
-        <Background 
+        <Background
           variant={BackgroundVariant.Dots}
           gap={20}
           size={1}

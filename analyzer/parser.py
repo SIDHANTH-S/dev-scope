@@ -113,6 +113,43 @@ class LanguageParser:
         """Extract text content from a tree-sitter node."""
         return source_code[node.start_byte:node.end_byte]
 
+    def _determine_c4_level(self, node_type: NodeType, file_path: str, name: str, is_entry: bool = False) -> str:
+        """Determine C4 model level for a node based on type, file, and context."""
+        
+        # System level: API endpoints and external boundaries
+        if node_type == NodeType.API_ENDPOINT:
+            return "system"
+        
+        # Container level: Entry modules, main applications, root services
+        if is_entry or node_type == NodeType.MODULE:
+            # Check if it's a main entry file
+            file_lower = file_path.lower()
+            name_lower = name.lower()
+            
+            # Entry points and main modules
+            if (name_lower in ['main', 'app', 'index'] or 
+                'main.' in file_lower or 
+                file_lower.endswith(('main.tsx', 'main.ts', 'main.js', 'app.tsx', 'app.py', 'urls.py')) or
+                'springbootapplication' in name_lower):
+                return "container"
+        
+        # Component level: React components, views, controllers, services
+        if node_type in [NodeType.COMPONENT, NodeType.VIEW, NodeType.CONTROLLER, NodeType.SERVICE]:
+            return "component"
+        
+        # Component level for modules that represent feature boundaries
+        if node_type == NodeType.MODULE:
+            # Check if it's a feature module (pages, components directories)
+            if any(segment in file_path.lower() for segment in ['pages', 'components', 'views', 'controllers', 'services']):
+                return "component"
+        
+        # Code level: Functions, classes, utilities
+        if node_type in [NodeType.FUNCTION, NodeType.CLASS, NodeType.MODEL]:
+            return "code"
+        
+        # Default to code level for unspecified types
+        return "code"
+
     def parse_project(self, entry_points: List[Dict], project_type: ProjectType):
         """Parse project files starting from entry points."""
         logging.info(f"Starting parse for project: {self.project_path}")
@@ -188,12 +225,13 @@ class LanguageParser:
             for node in ast.walk(tree):
                 if isinstance(node, ast.ClassDef):
                     node_id = self._generate_node_id(relative_path, node.name)
+                    c4_level = self._determine_c4_level(NodeType.CLASS, relative_path, node.name, is_entry)
                     graph_node = Node(
                         id=node_id,
                         type=NodeType.CLASS,
                         file=relative_path,
                         name=node.name,
-                        metadata={"is_entry": is_entry}
+                        metadata={"is_entry": is_entry, "c4_level": c4_level}
                     )
                     self.nodes.append(graph_node)
                     self.node_registry[node_id] = graph_node
@@ -203,13 +241,14 @@ class LanguageParser:
                     
                     # Check if it's a Django view
                     node_type = NodeType.VIEW if 'view' in node.name.lower() else NodeType.FUNCTION
+                    c4_level = self._determine_c4_level(node_type, relative_path, node.name, is_entry)
                     
                     graph_node = Node(
                         id=node_id,
                         type=node_type,
                         file=relative_path,
                         name=node.name,
-                        metadata={"is_entry": is_entry}
+                        metadata={"is_entry": is_entry, "c4_level": c4_level}
                     )
                     self.nodes.append(graph_node)
                     self.node_registry[node_id] = graph_node
@@ -350,12 +389,13 @@ class LanguageParser:
                 continue
             declared_names.add(class_name)
             node_id = self._generate_node_id(relative_path, class_name)
+            c4_level = self._determine_c4_level(NodeType.CLASS, relative_path, class_name, is_entry)
             graph_node = Node(
                 id=node_id, 
                 type=NodeType.CLASS, 
                 file=relative_path, 
                 name=class_name, 
-                metadata={"is_entry": is_entry}
+                metadata={"is_entry": is_entry, "c4_level": c4_level}
             )
             self.nodes.append(graph_node)
             self.node_registry[node_id] = graph_node
@@ -369,13 +409,14 @@ class LanguageParser:
             declared_names.add(func_name)
             is_component = func_name[0].isupper() and ext in ['.tsx', '.jsx']
             node_type = NodeType.COMPONENT if is_component else NodeType.FUNCTION
+            c4_level = self._determine_c4_level(node_type, relative_path, func_name, is_entry)
             node_id = self._generate_node_id(relative_path, func_name)
             graph_node = Node(
                 id=node_id, 
                 type=node_type, 
                 file=relative_path, 
                 name=func_name, 
-                metadata={"is_entry": is_entry}
+                metadata={"is_entry": is_entry, "c4_level": c4_level}
             )
             self.nodes.append(graph_node)
             self.node_registry[node_id] = graph_node
@@ -473,13 +514,14 @@ class LanguageParser:
             if not class_name:
                 continue
             node_type = NodeType.CONTROLLER if is_controller else (NodeType.SERVICE if is_service else NodeType.CLASS)
+            c4_level = self._determine_c4_level(node_type, relative_path, class_name, is_entry)
             node_id = self._generate_node_id(relative_path, class_name)
             graph_node = Node(
                 id=node_id,
                 type=node_type,
                 file=relative_path,
                 name=class_name,
-                metadata={"is_entry": is_entry}
+                metadata={"is_entry": is_entry, "c4_level": c4_level}
             )
             self.nodes.append(graph_node)
             self.node_registry[node_id] = graph_node
@@ -495,12 +537,13 @@ class LanguageParser:
                 continue
             api_node_id = f"api_{hashlib.md5(endpoint_path.encode()).hexdigest()[:8]}"
             if api_node_id not in self.node_registry:
+                c4_level = self._determine_c4_level(NodeType.API_ENDPOINT, relative_path, endpoint_path, False)
                 api_node = Node(
                     id=api_node_id,
                     type=NodeType.API_ENDPOINT,
                     file=relative_path,
                     name=endpoint_path,
-                    metadata={"endpoint": endpoint_path}
+                    metadata={"endpoint": endpoint_path, "c4_level": c4_level}
                 )
                 self.nodes.append(api_node)
                 self.node_registry[api_node_id] = api_node
@@ -512,12 +555,13 @@ class LanguageParser:
                 content = f.read()
             
             node_id = self._generate_node_id(relative_path, "template")
+            c4_level = self._determine_c4_level(NodeType.TEMPLATE, relative_path, file_path.stem, is_entry)
             graph_node = Node(
                 id=node_id,
                 type=NodeType.TEMPLATE,
                 file=relative_path,
                 name=file_path.stem,
-                metadata={"is_entry": is_entry}
+                metadata={"is_entry": is_entry, "c4_level": c4_level}
             )
             self.nodes.append(graph_node)
             self.node_registry[node_id] = graph_node
@@ -588,11 +632,27 @@ class LanguageParser:
             source_module_id = self._generate_node_id(from_file, 'module')
             target_module_id = self._generate_node_id(target_rel, 'module')
             if source_module_id not in self.node_registry:
-                src_node = Node(id=source_module_id, type=NodeType.MODULE, file=from_file, name=Path(from_file).stem)
+                src_name = Path(from_file).stem
+                c4_level = self._determine_c4_level(NodeType.MODULE, from_file, src_name, False)
+                src_node = Node(
+                    id=source_module_id, 
+                    type=NodeType.MODULE, 
+                    file=from_file, 
+                    name=src_name,
+                    metadata={"c4_level": c4_level}
+                )
                 self.nodes.append(src_node)
                 self.node_registry[source_module_id] = src_node
             if target_module_id not in self.node_registry:
-                tgt_node = Node(id=target_module_id, type=NodeType.MODULE, file=target_rel, name=Path(target_rel).stem)
+                tgt_name = Path(target_rel).stem
+                c4_level = self._determine_c4_level(NodeType.MODULE, target_rel, tgt_name, False)
+                tgt_node = Node(
+                    id=target_module_id, 
+                    type=NodeType.MODULE, 
+                    file=target_rel, 
+                    name=tgt_name,
+                    metadata={"c4_level": c4_level}
+                )
                 self.nodes.append(tgt_node)
                 self.node_registry[target_module_id] = tgt_node
             self.edges.append(Edge(source=source_module_id, target=target_module_id, type=EdgeType.DEPENDS_ON))
@@ -738,3 +798,5 @@ class LanguageParser:
         content = f"{file_path}:{name}"
         hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
         return f"{file_path.replace('/', '_').replace('.', '_')}_{name}_{hash_suffix}"
+        
+        
