@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from .models import ProjectType, ConfigFile
-from .plugins import get_all_plugins
+from .entrypoint_plugins import get_all_plugins
 
 
 class EntryPointIdentifier:

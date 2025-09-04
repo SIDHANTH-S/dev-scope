@@ -11,31 +11,14 @@ from pathlib import Path
 from typing import Dict, List
 
 from .models import ProjectType, ConfigFile
-
+from .plugins.base import BasePlugin 
 
 # --- Plugin Base Class ---
-class AnalyzerPlugin:
-    """Base class for a framework-specific analyzer plugin."""
-
-    name: str = "Base Plugin"
-    project_type: ProjectType = ProjectType.UNKNOWN
-
-    def __init__(self, identifier):
-        self.identifier = identifier
-        self.project_path = identifier.project_path
-        self.config_files = identifier.config_files
-        self.entry_points: List[Dict] = []
-
-    def is_applicable(self) -> bool:
-        return self.identifier.project_type == self.project_type
-
-    def find_entry_points(self) -> List[Dict]:
-        raise NotImplementedError("Each plugin must implement find_entry_points.")
 
 
 # ------------------------- Concrete Plugins -------------------------
 
-class MavenJavaPlugin(AnalyzerPlugin):
+class MavenJavaPlugin(BasePlugin):
     name: str = "Maven (Java)"
     project_type: ProjectType = ProjectType.MAVEN_JAVA
 
@@ -59,7 +42,7 @@ class MavenJavaPlugin(AnalyzerPlugin):
         return self.entry_points
 
 
-class ReactVitePlugin(AnalyzerPlugin):
+class ReactVitePlugin(BasePlugin):
     """Plugin to find entry points in React + Vite projects."""
     name: str = "React (Vite)"
     project_type: ProjectType = ProjectType.REACT_VITE
@@ -94,7 +77,7 @@ class ReactVitePlugin(AnalyzerPlugin):
         return self.entry_points
 
 
-class AngularPlugin(AnalyzerPlugin):
+class AngularPlugin(BasePlugin):
     name: str = "Angular"
     project_type: ProjectType = ProjectType.ANGULAR
 
@@ -119,7 +102,7 @@ class AngularPlugin(AnalyzerPlugin):
         return self.entry_points
 
 
-class DjangoPlugin(AnalyzerPlugin):
+class DjangoPlugin(BasePlugin):
     name: str = "Django"
     project_type: ProjectType = ProjectType.DJANGO
 
@@ -143,7 +126,7 @@ class DjangoPlugin(AnalyzerPlugin):
         return self.entry_points
 
 
-class ExpressNodePlugin(AnalyzerPlugin):
+class ExpressNodePlugin(BasePlugin):
     name: str = "Express (Node)"
     project_type: ProjectType = ProjectType.EXPRESS_NODE
 
@@ -166,7 +149,7 @@ class ExpressNodePlugin(AnalyzerPlugin):
         return self.entry_points
 
 
-class SpringBootPlugin(AnalyzerPlugin):
+class SpringBootPlugin(BasePlugin):
     name: str = "Spring Boot"
     project_type: ProjectType = ProjectType.SPRING_BOOT
 
@@ -190,7 +173,7 @@ class SpringBootPlugin(AnalyzerPlugin):
         return self.entry_points
 
 
-class AndroidPlugin(AnalyzerPlugin):
+class AndroidPlugin(BasePlugin):
     name: str = "Android"
     project_type: ProjectType = ProjectType.ANDROID
 
@@ -219,4 +202,4 @@ class AndroidPlugin(AnalyzerPlugin):
 
 def get_all_plugins():
     """Returns a list of all available plugin classes."""
-    return [cls for cls in AnalyzerPlugin.__subclasses__()]
+    return [cls for cls in BasePlugin.__subclasses__()]

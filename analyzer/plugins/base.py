@@ -67,3 +67,20 @@ class ScannerPlugin(ABC):
     def get_config_files(self) -> List[Dict[str, Any]]:
         """Return configuration files found by this plugin."""
         pass
+class BasePlugin:
+    """Base class for a framework-specific analyzer plugin."""
+
+    name: str = "Base Plugin"
+    project_type: ProjectType = ProjectType.UNKNOWN
+
+    def __init__(self, identifier):
+        self.identifier = identifier
+        self.project_path = identifier.project_path
+        self.config_files = identifier.config_files
+        self.entry_points: List[Dict] = []
+
+    def is_applicable(self) -> bool:
+        return self.identifier.project_type == self.project_type
+
+    def find_entry_points(self) -> List[Dict]:
+        raise NotImplementedError("Each plugin must implement find_entry_points.")
