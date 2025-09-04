@@ -3,12 +3,15 @@ Main codebase analyzer orchestrator.
 """
 
 import logging
-from typing import Dict, Any
+import os
+from typing import Dict, Any, Optional
+import yaml
 
 from .models import ProjectType
 from .scanner import ProjectScanner
 from .entry_points import EntryPointIdentifier
 from .parser import LanguageParser
+from .semantic_analyzer import SemanticAnalyzer
 
 
 class WorkflowGraphGenerator:
@@ -67,6 +70,9 @@ class CodebaseAnalyzer:
         self.project_path = folder_path
         
         try:
+            # Step 0: Load optional user config (.devscope.yml)
+            user_config = self._load_user_config(folder_path)
+
             # Step 1: Scan project
             self.scanner = ProjectScanner(folder_path)
             scan_results = self.scanner.scan()
@@ -82,11 +88,23 @@ class CodebaseAnalyzer:
             )
             entry_points = self.entry_identifier.identify()
             
-            # Step 4: Parse and analyze
-            self.parser = LanguageParser(folder_path)
+            # Step 4: Parse
+            self.parser = LanguageParser(folder_path, user_config=user_config)
             self.parser.parse_project(entry_points, self.project_type)
             
-            # Step 5: Generate workflow graph
+            # Step 5: Semantic analysis (edges, relationships)
+            semantic = SemanticAnalyzer(self.parser.nodes, getattr(self.parser, 'file_symbols', {}))
+            derived_edges = semantic.analyze()
+
+            # Merge parser edges and semantic edges (avoid duplicates in a simple way)
+            existing = {(e.source, e.target, e.type.value) for e in self.parser.edges}
+            for e in derived_edges:
+                key = (e.source, e.target, e.type.value)
+                if key not in existing:
+                    self.parser.edges.append(e)
+                    existing.add(key)
+
+            # Step 6: Generate workflow graph
             graph_generator = WorkflowGraphGenerator(
                 self.parser.nodes,
                 self.parser.edges
@@ -166,3 +184,13 @@ class CodebaseAnalyzer:
             ProjectType.ANDROID: ("java", "android"),
         }
         return mapping.get(project_type, ("unknown", "unknown"))
+
+    def _load_user_config(self, folder_path: str) -> Optional[Dict[str, Any]]:
+        try:
+            config_path = os.path.join(folder_path, '.devscope.yml')
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    return yaml.safe_load(f) or {}
+        except Exception as e:
+            logging.warning(f"Failed to load user config: {e}")
+        return {}

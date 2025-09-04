@@ -13,6 +13,7 @@ import tree_sitter
 from tree_sitter import Language, Parser
 
 from .models import Node, Edge, NodeType, EdgeType, ProjectType
+from .plugins.languages import JavaScriptPlugin, JavaPlugin, PythonPlugin
 
 # -------------------------------------------------------------------
 # Tree-sitter language setup (package-first, compiled fallback)
@@ -47,13 +48,15 @@ def _load_from_compiled(name: str) -> Optional[Any]:
 class LanguageParser:
     """Parses source code files and extracts semantic information."""
 
-    def __init__(self, project_path: str):
+    def __init__(self, project_path: str, user_config: Optional[Dict[str, Any]] = None):
         """Initialize the language parser.
 
         Args:
             project_path: Path to the project directory
+            user_config: Optional user configuration for C4 level overrides
         """
         self.project_path = Path(project_path)
+        self.user_config = user_config or {}
         self.file_asts: Dict[str, Any] = {}
         self.nodes: List[Node] = []
         self.edges: List[Edge] = []
@@ -63,6 +66,13 @@ class LanguageParser:
         self.parsed_files: Set[str] = set()
         # Incremental parsing cache: relative_path -> md5 hash
         self.file_cache: Dict[str, str] = {}
+        
+        # Initialize language plugins
+        self.language_plugins = [
+            JavaScriptPlugin(project_path, user_config),
+            JavaPlugin(project_path, user_config),
+            PythonPlugin(project_path, user_config)
+        ]
 
     def _get_ts_language(self, ext: str):
         """Return a Tree-sitter language for JS/TS/TSX.
@@ -115,6 +125,20 @@ class LanguageParser:
 
     def _determine_c4_level(self, node_type: NodeType, file_path: str, name: str, is_entry: bool = False) -> str:
         """Determine C4 model level for a node based on type, file, and context."""
+        # User overrides from .devscope.yml
+        try:
+            overrides = (self.user_config or {}).get('c4_overrides', {})
+            # Path-based overrides: e.g., { "system": ["src/api/"] }
+            for level, patterns in (overrides.get('path_contains', {}) or {}).items():
+                for pat in patterns:
+                    if pat and pat.lower() in file_path.lower():
+                        return level
+            # Type-based overrides: e.g., { "component": ["component", "view"] }
+            for level, types in (overrides.get('node_types', {}) or {}).items():
+                if node_type.value in types:
+                    return level
+        except Exception:
+            pass
         
         # System level: API endpoints and external boundaries
         if node_type == NodeType.API_ENDPOINT:
@@ -173,7 +197,7 @@ class LanguageParser:
         logging.info(f"Parse complete. Found {len(self.nodes)} nodes and {len(self.edges)} edges")
         
     def _parse_file(self, file_path: Path, is_entry: bool = False):
-        """Parse individual file based on extension, with caching."""
+        """Parse individual file using appropriate language plugin."""
         ext = file_path.suffix.lower()
         relative_path = str(file_path.relative_to(self.project_path))
 
@@ -198,20 +222,31 @@ class LanguageParser:
             # Mark as parsed before parsing to avoid recursion issues
             self.parsed_files.add(relative_path)
 
-            if ext in ['.py']:
-                self._parse_python_file(file_path, relative_path, is_entry)
-            elif ext in ['.js', '.jsx', '.ts', '.tsx']:
-                # pass content to avoid re-read if we want later; for now re-read internally
-                self._parse_javascript_file(file_path, relative_path, is_entry)
-            elif ext in ['.java']:
-                self._parse_java_file(file_path, relative_path, is_entry)
-            elif ext in ['.html']:
-                self._parse_html_file(file_path, relative_path, is_entry)
+            # Find appropriate language plugin
+            plugin = self._get_plugin_for_extension(ext)
+            if plugin:
+                nodes = plugin.parse(file_path, content, is_entry)
+                self.nodes.extend(nodes)
+                
+                # Register nodes in the registry
+                for node in nodes:
+                    self.node_registry[node.id] = node
+            else:
+                # Fallback for HTML files (not yet pluginized)
+                if ext == '.html':
+                    self._parse_html_file(file_path, relative_path, is_entry)
 
             # Update cache on successful parse
             self.file_cache[relative_path] = content_hash
         except Exception as e:
             logging.error(f"Failed to parse file {relative_path}: {e}")
+    
+    def _get_plugin_for_extension(self, ext: str):
+        """Get the appropriate language plugin for the file extension."""
+        for plugin in self.language_plugins:
+            if plugin.can_parse(ext):
+                return plugin
+        return None
 
     
     def _parse_python_file(self, file_path: Path, relative_path: str, is_entry: bool):
@@ -798,5 +833,6 @@ class LanguageParser:
         content = f"{file_path}:{name}"
         hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
         return f"{file_path.replace('/', '_').replace('.', '_')}_{name}_{hash_suffix}"
+        
         
         

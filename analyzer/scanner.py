@@ -9,23 +9,14 @@ from pathlib import Path
 from typing import Dict, List, Any, Set
 
 from .models import ProjectType, ConfigFile
+from .plugins.scanners import (
+    VitePlugin, MavenPlugin, DjangoPlugin, AngularPlugin,
+    ExpressPlugin, SpringBootPlugin, AndroidPlugin
+)
 
 
 class ProjectScanner:
-    """Scans a project directory to detect project type and configuration files."""
-    
-    CONFIG_PATTERNS = {
-        'pom.xml': ProjectType.MAVEN_JAVA,
-        'build.gradle': ProjectType.GRADLE_JAVA,
-        'package.json': ProjectType.REACT_VITE,  # Will be refined later
-        'angular.json': ProjectType.ANGULAR,
-        'settings.py': ProjectType.DJANGO,
-        'urls.py': ProjectType.DJANGO,
-        'requirements.txt': ProjectType.PYTHON_APP,
-        'AndroidManifest.xml': ProjectType.ANDROID,
-        'vite.config.ts': ProjectType.REACT_VITE,
-        'vite.config.js': ProjectType.REACT_VITE,
-    }
+    """Scans a project directory to detect project type and configuration files using plugins."""
     
     def __init__(self, project_path: str):
         """Initialize the project scanner.
@@ -37,8 +28,19 @@ class ProjectScanner:
         self.config_files: List[ConfigFile] = []
         self.detected_types: Set[ProjectType] = set()
         
+        # Initialize scanner plugins
+        self.scanner_plugins = [
+            VitePlugin(project_path),
+            MavenPlugin(project_path),
+            DjangoPlugin(project_path),
+            AngularPlugin(project_path),
+            ExpressPlugin(project_path),
+            SpringBootPlugin(project_path),
+            AndroidPlugin(project_path)
+        ]
+        
     def scan(self) -> Dict[str, Any]:
-        """Recursively scan project folder for configuration files.
+        """Scan project using scanner plugins to detect project type and configuration files.
         
         Returns:
             Dictionary containing config files and detected project types
@@ -48,6 +50,8 @@ class ProjectScanner:
             
         logging.info(f"Scanning project at: {self.project_path}")
         
+        # Get all files in the project
+        all_files = []
         for root, dirs, files in os.walk(self.project_path):
             # Skip common directories that shouldn't be scanned
             dirs[:] = [d for d in dirs if d not in {
@@ -57,29 +61,34 @@ class ProjectScanner:
             
             for file in files:
                 file_path = Path(root) / file
-                relative_path = file_path.relative_to(self.project_path)
+                all_files.append(file_path)
+        
+        # Try each scanner plugin
+        for plugin in self.scanner_plugins:
+            if plugin.is_applicable(all_files):
+                project_type = plugin.get_project_type()
+                config_data = plugin.get_config_files()
                 
-                # Check if it's a config file
-                for pattern, project_type in self.CONFIG_PATTERNS.items():
-                    if file == pattern:
-                        config = ConfigFile(
-                            path=str(relative_path),
-                            type=pattern
-                        )
-                        self.config_files.append(config)
-                        self.detected_types.add(project_type)
-                        logging.debug(f"Found config file: {relative_path} -> {project_type.value}")
-                        
-                        # Load config content for certain files
-                        if pattern in ['package.json', 'angular.json']:
-                            try:
-                                with open(file_path, 'r', encoding='utf-8') as f:
-                                    config.content = json.load(f)
-                            except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                                logging.warning(f"Failed to parse {pattern} at {relative_path}: {e}")
-                                
-        # Content-based enhancement of detection
-        self._enhance_detection_from_content()
+                self.detected_types.add(project_type)
+                logging.info(f"Detected project type: {project_type.value} using {plugin.__class__.__name__}")
+                
+                # Convert config data to ConfigFile objects
+                for config_dict in config_data:
+                    config_file = ConfigFile(
+                        path=config_dict['path'],
+                        type=config_dict['type'],
+                        content=config_dict.get('content')
+                    )
+                    self.config_files.append(config_file)
+                    logging.debug(f"Found config file: {config_dict['path']} -> {config_dict['type']}")
+                
+                # Stop after first successful detection
+                break
+        
+        # If no plugin detected anything, mark as unknown
+        if not self.detected_types:
+            self.detected_types.add(ProjectType.UNKNOWN)
+            logging.warning("No project type detected, marking as UNKNOWN")
         
         logging.info(f"Scan complete. Found {len(self.config_files)} config files, "
                     f"detected types: {[t.value for t in self.detected_types]}")
@@ -90,62 +99,9 @@ class ProjectScanner:
         }
     
     def _enhance_detection_from_content(self):
-        """Enhance project type detection based on config file content."""
-        for config in self.config_files:
-            fpath = self.project_path / config.path
-            try:
-                if config.type == 'package.json':
-                    self._analyze_package_json(fpath)
-                elif config.type == 'pom.xml':
-                    self._analyze_pom_xml(fpath)
-                elif config.type == 'build.gradle':
-                    self._analyze_build_gradle(fpath)
-                elif config.type == 'requirements.txt':
-                    self._analyze_requirements_txt(fpath)
-            except Exception as e:
-                logging.exception(f"Failed reading config {config.path}: {e}")
-    
-    def _analyze_package_json(self, fpath: Path):
-        """Analyze package.json for project type hints."""
-        try:
-            pkg = json.loads(fpath.read_text(encoding='utf-8'))
-            deps = {**pkg.get('dependencies', {}), **pkg.get('devDependencies', {})}
-            
-            if any(k in deps for k in ['react', 'react-dom']) or 'vite' in deps:
-                self.detected_types.add(ProjectType.REACT_VITE)
-            if '@angular/core' in deps:
-                self.detected_types.add(ProjectType.ANGULAR)
-            if 'express' in deps:
-                self.detected_types.add(ProjectType.EXPRESS_NODE)
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logging.warning(f"Failed to analyze package.json: {e}")
-    
-    def _analyze_pom_xml(self, fpath: Path):
-        """Analyze pom.xml for project type hints."""
-        try:
-            text = fpath.read_text(encoding='utf-8')
-            if 'spring-boot-starter' in text:
-                self.detected_types.add(ProjectType.SPRING_BOOT)
-            self.detected_types.add(ProjectType.MAVEN_JAVA)
-        except UnicodeDecodeError as e:
-            logging.warning(f"Failed to analyze pom.xml: {e}")
-    
-    def _analyze_build_gradle(self, fpath: Path):
-        """Analyze build.gradle for project type hints."""
-        try:
-            content = fpath.read_text(encoding='utf-8')
-            if 'org.springframework.boot' in content:
-                self.detected_types.add(ProjectType.SPRING_BOOT)
-            self.detected_types.add(ProjectType.GRADLE_JAVA)
-        except UnicodeDecodeError as e:
-            logging.warning(f"Failed to analyze build.gradle: {e}")
-    
-    def _analyze_requirements_txt(self, fpath: Path):
-        """Analyze requirements.txt for project type hints."""
-        try:
-            content = fpath.read_text(encoding='utf-8').lower()
-            if 'django' in content:
-                self.detected_types.add(ProjectType.DJANGO)
-            self.detected_types.add(ProjectType.PYTHON_APP)
-        except UnicodeDecodeError as e:
-            logging.warning(f"Failed to analyze requirements.txt: {e}")
+        """Enhance project type detection based on config file content.
+        
+        This method is kept for backward compatibility but is no longer used
+        since detection is now handled by plugins.
+        """
+        pass
