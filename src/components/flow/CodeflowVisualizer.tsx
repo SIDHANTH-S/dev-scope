@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import {
   ReactFlow,
   MiniMap,
@@ -13,6 +13,8 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import CodeNode from './CodeNode';
+import FilterControls from './FilterControls';
+import { applyHierarchicalLayout } from './layouts/HierarchicalLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Maximize2, RotateCcw } from 'lucide-react';
@@ -63,6 +65,18 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [visibleEdgeTypes, setVisibleEdgeTypes] = useState<Set<string>>(new Set());
+  const [visibleNodeTypes, setVisibleNodeTypes] = useState<Set<string>>(new Set());
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // Initialize visible types
+  useEffect(() => {
+    if (graphData.metadata) {
+      setVisibleEdgeTypes(new Set(graphData.metadata.edge_types));
+      setVisibleNodeTypes(new Set(graphData.metadata.node_types));
+    }
+  }, [graphData.metadata]);
 
   // Convert backend data to React Flow format
   useEffect(() => {
@@ -144,13 +158,66 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
     
     setNodes(layoutedNodes);
     setTimeout(() => reactFlowInstance.fitView({ padding: 0.1 }), 100);
-  }, [nodes, setNodes, reactFlowInstance]);
+  }, [nodes, edges, setNodes, reactFlowInstance, graphData]);
 
   const handleFitView = useCallback(() => {
     if (reactFlowInstance) {
       reactFlowInstance.fitView({ padding: 0.1 });
     }
   }, [reactFlowInstance]);
+
+  // Filter nodes and edges based on search and visibility settings
+  const filteredNodes = useMemo(() => {
+    return nodes.filter(node => {
+      const matchesSearch = searchTerm === '' || 
+        node.data?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        node.data?.file?.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesType = visibleNodeTypes.has(node.data?.type || '');
+      
+      return matchesSearch && matchesType;
+    });
+  }, [nodes, searchTerm, visibleNodeTypes]);
+
+  const filteredEdges = useMemo(() => {
+    return edges.filter(edge => {
+      const edgeTypeFromLabel = edge.label || edge.type || '';
+      return visibleEdgeTypes.has(edgeTypeFromLabel);
+    });
+  }, [edges, visibleEdgeTypes]);
+
+  // Filter control handlers
+  const handleEdgeTypeToggle = useCallback((type: string) => {
+    setVisibleEdgeTypes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(type)) {
+        newSet.delete(type);
+      } else {
+        newSet.add(type);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const handleNodeTypeToggle = useCallback((type: string) => {
+    setVisibleNodeTypes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(type)) {
+        newSet.delete(type);
+      } else {
+        newSet.add(type);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const handleShowAllEdges = useCallback(() => {
+    setVisibleEdgeTypes(new Set(graphData.metadata?.edge_types || []));
+  }, [graphData.metadata]);
+
+  const handleHideAllEdges = useCallback(() => {
+    setVisibleEdgeTypes(new Set());
+  }, []);
 
   return (
     <div className="w-full h-full relative">
@@ -172,6 +239,15 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
         <Button
           variant="outline"
           size="sm"
+          onClick={() => setShowFilters(!showFilters)}
+          className="bg-background/80 backdrop-blur-sm"
+        >
+          <Filter className="w-4 h-4" />
+          Filters
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
           onClick={handleLayout}
           className="bg-background/80 backdrop-blur-sm"
         >
@@ -188,6 +264,22 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
           Fit View
         </Button>
       </div>
+
+      {/* Filter Controls */}
+      {showFilters && (
+        <FilterControls
+          edgeTypes={graphData.metadata?.edge_types || []}
+          nodeTypes={graphData.metadata?.node_types || []}
+          visibleEdgeTypes={visibleEdgeTypes}
+          visibleNodeTypes={visibleNodeTypes}
+          searchTerm={searchTerm}
+          onEdgeTypeToggle={handleEdgeTypeToggle}
+          onNodeTypeToggle={handleNodeTypeToggle}
+          onSearchChange={setSearchTerm}
+          onShowAllEdges={handleShowAllEdges}
+          onHideAllEdges={handleHideAllEdges}
+        />
+      )}
 
       {/* Legend */}
       {graphData?.metadata?.node_types && (
@@ -214,8 +306,8 @@ const CodeflowVisualizer = ({ graphData }: CodeflowVisualizerProps) => {
       )}
 
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={filteredNodes}
+        edges={filteredEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onInit={onInit}

@@ -8,6 +8,7 @@ interface CodeNodeProps {
     name: string;
     type: string;
     file: string;
+    importance?: number;
     metadata?: {
       is_entry?: boolean;
       endpoint?: string;
@@ -17,8 +18,8 @@ interface CodeNodeProps {
   selected?: boolean;
 }
 
-const getNodeStyle = (type: string) => {
-  const styles = {
+const getNodeStyle = (type: string, importance: number = 1, isEntry: boolean = false) => {
+  const baseStyles = {
     component: 'border-l-4 border-l-[hsl(var(--code-component))] bg-gradient-to-r from-[hsl(var(--code-component)/0.1)] to-transparent',
     class: 'border-l-4 border-l-[hsl(var(--code-class))] bg-gradient-to-r from-[hsl(var(--code-class)/0.1)] to-transparent',
     function: 'border-l-4 border-l-[hsl(var(--code-function))] bg-gradient-to-r from-[hsl(var(--code-function)/0.1)] to-transparent',
@@ -28,7 +29,12 @@ const getNodeStyle = (type: string) => {
     service: 'border-l-4 border-l-[hsl(var(--code-service))] bg-gradient-to-r from-[hsl(var(--code-service)/0.1)] to-transparent',
     view: 'border-l-4 border-l-[hsl(var(--code-view))] bg-gradient-to-r from-[hsl(var(--code-view)/0.1)] to-transparent'
   };
-  return styles[type as keyof typeof styles] || styles.function;
+  
+  const baseStyle = baseStyles[type as keyof typeof baseStyles] || baseStyles.function;
+  const glowStyle = isEntry ? 'shadow-[0_0_20px_hsl(var(--primary)/0.3)]' : 
+                   importance > 5 ? 'shadow-[0_0_10px_hsl(var(--primary)/0.15)]' : '';
+  
+  return `${baseStyle} ${glowStyle}`;
 };
 
 const getNodeIcon = (type: string) => {
@@ -47,15 +53,25 @@ const getNodeIcon = (type: string) => {
 };
 
 const CodeNode = ({ data, selected }: CodeNodeProps) => {
-  const { name, type, file, metadata } = data;
+  const { name, type, file, metadata, importance = 1 } = data;
   const isEntry = metadata?.is_entry;
+  
+  // Calculate node size based on importance
+  const getNodeSize = () => {
+    if (isEntry) return "min-w-[240px] max-w-[320px]";
+    if (importance > 7) return "min-w-[220px] max-w-[300px]";
+    if (importance > 4) return "min-w-[200px] max-w-[280px]";
+    return "min-w-[180px] max-w-[260px]";
+  };
 
   return (
     <div className={cn(
-      'min-w-[200px] max-w-[280px] p-3 rounded-lg border bg-card text-card-foreground shadow-lg',
-      'transition-all duration-300 hover:shadow-xl',
-      getNodeStyle(type),
-      selected && 'ring-2 ring-primary ring-offset-2 ring-offset-background'
+      getNodeSize(),
+      'p-3 rounded-lg border bg-card text-card-foreground shadow-lg',
+      'transition-all duration-300 hover:shadow-xl relative',
+      getNodeStyle(type, importance, isEntry),
+      selected && 'ring-2 ring-primary ring-offset-2 ring-offset-background',
+      isEntry && 'transform scale-105'
     )}>
       {/* Handles */}
       <Handle
@@ -82,10 +98,15 @@ const CodeNode = ({ data, selected }: CodeNodeProps) => {
             </Badge>
             {isEntry && (
               <Badge 
-                variant="outline" 
-                className="text-xs border-accent text-accent"
+                variant="default" 
+                className="text-xs bg-primary text-primary-foreground"
               >
-                entry
+                ENTRY
+              </Badge>
+            )}
+            {importance > 7 && !isEntry && (
+              <Badge variant="outline" className="text-xs">
+                ⭐
               </Badge>
             )}
           </div>
@@ -112,9 +133,9 @@ const CodeNode = ({ data, selected }: CodeNodeProps) => {
         )}
       </div>
 
-      {/* Entry point glow */}
-      {isEntry && (
-        <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-primary/20 to-transparent pointer-events-none" />
+      {/* Importance indicator */}
+      {importance > 5 && (
+        <div className="absolute -top-1 -right-1 w-3 h-3 bg-primary rounded-full border-2 border-background" />
       )}
     </div>
   );
