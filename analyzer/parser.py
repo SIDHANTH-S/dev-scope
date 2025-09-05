@@ -83,24 +83,28 @@ class LanguageParser:
             if ext in ['.js', '.jsx']:
                 try:
                     import tree_sitter_javascript
-                    return tree_sitter_javascript.language()
+                    from tree_sitter import Language
+                    return Language(tree_sitter_javascript.language())
                 except Exception:
                     return _load_from_compiled('javascript')
             if ext == '.ts':
                 try:
                     import tree_sitter_typescript
-                    return tree_sitter_typescript.language()
+                    from tree_sitter import Language
+                    return Language(tree_sitter_typescript.language())
                 except Exception:
                     return _load_from_compiled('typescript')
             if ext == '.tsx':
                 # Try TSX first, then fall back to TS
                 try:
                     import tree_sitter_typescript
-                    return tree_sitter_typescript.language()
+                    from tree_sitter import Language
+                    return Language(tree_sitter_typescript.language())
                 except Exception:
                     try:
                         import tree_sitter_typescript
-                        return tree_sitter_typescript.language()
+                        from tree_sitter import Language
+                        return Language(tree_sitter_typescript.language())
                     except Exception:
                         return _load_from_compiled('tsx') or _load_from_compiled('typescript')
         except Exception as e:
@@ -112,7 +116,8 @@ class LanguageParser:
         try:
             try:
                 import tree_sitter_java
-                return tree_sitter_java.language()
+                from tree_sitter import Language
+                return Language(tree_sitter_java.language())
             except Exception:
                 return _load_from_compiled('java')
         except Exception as e:
@@ -449,7 +454,7 @@ class LanguageParser:
                 return
 
             parser = Parser()
-            parser.set_language(lang)
+            parser.language = lang
             tree = parser.parse(bytes(content, 'utf8'))
             root = tree.root_node
 
@@ -603,7 +608,7 @@ class LanguageParser:
                 return
 
             parser = Parser()
-            parser.set_language(lang)
+            parser.language = lang
             tree = parser.parse(bytes(content, 'utf8'))
             root = tree.root_node
 
@@ -894,7 +899,7 @@ class LanguageParser:
             if not lang:
                 return
             parser = Parser()
-            parser.set_language(lang)
+            parser.language = lang
             tree = parser.parse(content.encode('utf-8'))
             root = tree.root_node
     

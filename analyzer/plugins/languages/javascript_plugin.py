@@ -49,20 +49,20 @@ class JavaScriptPlugin(LanguagePlugin):
                 return nodes, symbols
             
             # Parse with tree-sitter
-            tree = lang.parse(bytes(content, 'utf-8'))
+            from tree_sitter import Parser
+            parser = Parser()
+            parser.language = lang
+            tree = parser.parse(bytes(content, 'utf-8'))
             
-            # Execute queries
-            captures = self._execute_queries(lang, tree, content)
-            
-            # Process captures into nodes
-            function_nodes = self._process_captures(captures, content, relative_path, file_path.suffix, is_entry)
+            # Simple parsing without queries for now
+            function_nodes = self._simple_parse(tree, content, relative_path, file_path.suffix, is_entry)
             nodes.extend(function_nodes)
             
             # Create symbols dictionary
             symbols = {
                 'declared': [node.name for node in function_nodes if node.name],
-                'imports': [self._capture_text(content, node) for node in captures.get('import_path', [])],
-                'jsx_components': [self._capture_text(content, node) for node in captures.get('jsx_name', []) if self._capture_text(content, node) and self._capture_text(content, node)[0].isupper()]
+                'imports': [],  # Will be populated by main parser
+                'jsx_components': []  # Will be populated by main parser
             }
             
         except Exception as e:
@@ -70,15 +70,81 @@ class JavaScriptPlugin(LanguagePlugin):
         
         return nodes, symbols
     
+    def _simple_parse(self, tree, content: str, relative_path: str, ext: str, is_entry: bool) -> List[Node]:
+        """Simple parsing without queries - just walk the tree."""
+        nodes = []
+        
+        def walk_node(node, depth=0):
+            if node.type == 'function_declaration':
+                # Find the name identifier
+                for child in node.children:
+                    if child.type == 'identifier':
+                        func_name = self._capture_text(content, child)
+                        if func_name:
+                            is_component = func_name[0].isupper() and ext in ['.tsx', '.jsx']
+                            node_type = NodeType.COMPONENT if is_component else NodeType.FUNCTION
+                            c4_level = self._determine_c4_level(node_type, relative_path, func_name, is_entry)
+                            node_id = self._generate_node_id(relative_path, func_name)
+                            graph_node = Node(
+                                id=node_id, type=node_type, file=relative_path, name=func_name,
+                                metadata={"is_entry": is_entry, "c4_level": c4_level}
+                            )
+                            nodes.append(graph_node)
+                        break
+            elif node.type == 'class_declaration':
+                # Find the name identifier
+                for child in node.children:
+                    if child.type == 'identifier':
+                        class_name = self._capture_text(content, child)
+                        if class_name:
+                            c4_level = self._determine_c4_level(NodeType.CLASS, relative_path, class_name, is_entry)
+                            node_id = self._generate_node_id(relative_path, class_name)
+                            graph_node = Node(
+                                id=node_id, type=NodeType.CLASS, file=relative_path, name=class_name,
+                                metadata={"is_entry": is_entry, "c4_level": c4_level}
+                            )
+                            nodes.append(graph_node)
+                        break
+            elif node.type == 'variable_declaration':
+                # Check for arrow functions or function expressions
+                for child in node.children:
+                    if child.type == 'variable_declarator':
+                        for grandchild in child.children:
+                            if grandchild.type == 'identifier':
+                                var_name = self._capture_text(content, grandchild)
+                                # Check if it's assigned to a function
+                                for sibling in child.children:
+                                    if sibling.type in ['arrow_function', 'function_expression']:
+                                        is_component = var_name[0].isupper() and ext in ['.tsx', '.jsx']
+                                        node_type = NodeType.COMPONENT if is_component else NodeType.FUNCTION
+                                        c4_level = self._determine_c4_level(node_type, relative_path, var_name, is_entry)
+                                        node_id = self._generate_node_id(relative_path, var_name)
+                                        graph_node = Node(
+                                            id=node_id, type=node_type, file=relative_path, name=var_name,
+                                            metadata={"is_entry": is_entry, "c4_level": c4_level}
+                                        )
+                                        nodes.append(graph_node)
+                                        break
+                                break
+            
+            # Recursively walk children
+            for child in node.children:
+                walk_node(child, depth + 1)
+        
+        walk_node(tree.root_node)
+        return nodes
+    
     def _get_ts_language(self):
         """Get TypeScript/JavaScript language for tree-sitter."""
         try:
             import tree_sitter_javascript
-            return tree_sitter_javascript.language()
+            from tree_sitter import Language
+            return Language(tree_sitter_javascript.language())
         except ImportError:
             try:
                 import tree_sitter_typescript
-                return tree_sitter_typescript.language()
+                from tree_sitter import Language
+                return Language(tree_sitter_typescript.language())
             except ImportError:
                 logging.warning("Neither tree-sitter-javascript nor tree-sitter-typescript available")
                 return None
@@ -98,27 +164,30 @@ class JavaScriptPlugin(LanguagePlugin):
             # Core queries
             core_queries = self.queries.get('core', [])
             for query_str in core_queries:
-                query = lang.query(query_str)
+                from tree_sitter import Query
+                query = Query(lang, query_str)
                 query_captures = query.captures(tree.root_node)
-                for capture_name, node in query_captures:
+                for node, capture_name in query_captures:
                     if capture_name in captures:
                         captures[capture_name].append(node)
             
             # JSX queries
             jsx_queries = self.queries.get('jsx', [])
             for query_str in jsx_queries:
-                query = lang.query(query_str)
+                from tree_sitter import Query
+                query = Query(lang, query_str)
                 jsx_captures = query.captures(tree.root_node)
-                for capture_name, node in jsx_captures:
+                for node, capture_name in jsx_captures:
                     if capture_name == 'jsx_name':
                         captures['jsx_name'].append(node)
             
             # Call queries
             call_queries = self.queries.get('calls', [])
             for query_str in call_queries:
-                query = lang.query(query_str)
+                from tree_sitter import Query
+                query = Query(lang, query_str)
                 call_captures = query.captures(tree.root_node)
-                for capture_name, node in call_captures:
+                for node, capture_name in call_captures:
                     if capture_name in ['callee', 'obj', 'prop']:
                         captures['called_names'].append(node)
                         

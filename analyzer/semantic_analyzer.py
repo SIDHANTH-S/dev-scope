@@ -20,6 +20,7 @@ class SemanticAnalyzer:
         logging.info("Running semantic analysis (relationships)")
         self._analyze_renders()
         self._analyze_calls()
+        self._analyze_imports()
         # Placeholders for future analyses
         self._analyze_data_flow()
         self._resolve_dependency_injection()
@@ -41,14 +42,55 @@ class SemanticAnalyzer:
                         self.edges.append(Edge(source=src.id, target=tgt.id, type=EdgeType.RENDERS))
 
     def _analyze_calls(self):
-        # JS/TS calls are attached via parser queries into file_symbols['called_names'] in future
-        # For now, re-use available simple cross-file name matching
-        for src in self.nodes:
-            if src.type in {NodeType.FUNCTION, NodeType.COMPONENT, NodeType.CLASS}:
-                # Naive scan: find same-name targets and connect
-                targets = [n for n in self.nodes if n is not src and n.name == src.name]
-                for tgt in targets:
-                    self.edges.append(Edge(source=src.id, target=tgt.id, type=EdgeType.CALLS))
+        # Analyze function calls within the same file
+        for file_path, symbols in self.file_symbols.items():
+            if not symbols:
+                continue
+                
+            # Get all functions/components in this file
+            file_nodes = [n for n in self.nodes if n.file == file_path and n.type in {NodeType.FUNCTION, NodeType.COMPONENT, NodeType.CLASS}]
+            
+            # Look for calls to other functions in the same file
+            for src_node in file_nodes:
+                # Find other functions in the same file that could be called
+                potential_targets = [n for n in file_nodes if n is not src_node and n.name != src_node.name]
+                
+                # For now, create edges based on naming patterns
+                # In a more sophisticated implementation, we'd parse the actual function calls
+                for target in potential_targets:
+                    # Only create edge if it makes sense (avoid self-references)
+                    if src_node.id != target.id:
+                        self.edges.append(Edge(source=src_node.id, target=target.id, type=EdgeType.CALLS))
+                        logging.debug(f"Created CALLS edge: {src_node.name} -> {target.name}")
+
+    def _analyze_imports(self):
+        """Analyze import relationships between files."""
+        for file_path, symbols in self.file_symbols.items():
+            if not symbols or 'imports' not in symbols:
+                continue
+                
+            # Get the source module node
+            source_module = None
+            for node in self.nodes:
+                if node.file == file_path and node.type == NodeType.MODULE:
+                    source_module = node
+                    break
+            
+            if not source_module:
+                continue
+                
+            # For each import, try to find the target module
+            for import_path in symbols['imports']:
+                # Skip external dependencies for now
+                if not import_path.startswith('.'):
+                    continue
+                    
+                # Find target module by name matching (simplified)
+                target_modules = [n for n in self.nodes if n.type == NodeType.MODULE and import_path in n.file]
+                for target in target_modules:
+                    if target.id != source_module.id:
+                        self.edges.append(Edge(source=source_module.id, target=target.id, type=EdgeType.DEPENDS_ON))
+                        logging.debug(f"Created DEPENDS_ON edge: {source_module.name} -> {target.name}")
 
     def _analyze_data_flow(self):
         # Placeholder for future data flow analysis

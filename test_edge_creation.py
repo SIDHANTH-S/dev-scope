@@ -25,10 +25,47 @@ def test_edge_creation():
             (project_path / "package.json").write_text('''{
   "name": "test-project",
   "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
   "dependencies": {
-    "react": "^18.0.0"
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.0.0",
+    "vite": "^4.0.0"
   }
 }''')
+            
+            # Create vite.config.js
+            (project_path / "vite.config.js").write_text('''import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  root: '.',
+  build: {
+    outDir: 'dist'
+  }
+})''')
+            
+            # Create index.html
+            (project_path / "index.html").write_text('''<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vite + React</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>''')
             
             # Create src directory
             src_dir = project_path / "src"
