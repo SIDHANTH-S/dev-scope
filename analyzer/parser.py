@@ -294,11 +294,15 @@ class LanguageParser:
             if not lang:
                 return
                 
-            tree = lang.parse(bytes(content, 'utf-8'))
+            from tree_sitter import Parser
+            parser = Parser()
+            parser.language = lang
+            tree = parser.parse(bytes(content, 'utf-8'))
             root = tree.root_node
             
             # Query for import statements
-            query = lang.query("(import_statement source: (string) @import_path)")
+            from tree_sitter import Query
+            query = Query(lang, "(import_statement source: (string) @import_path)")
             captures = query.captures(root)
             
             source_module_id = self._generate_node_id(relative_path, 'module')
