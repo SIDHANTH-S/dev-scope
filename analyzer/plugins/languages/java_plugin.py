@@ -27,6 +27,19 @@ class JavaPlugin(LanguagePlugin):
         relative_path = str(file_path.relative_to(self.project_path))
         
         try:
+            # Create module node for the file
+            module_name = file_path.stem
+            module_id = self._generate_node_id(relative_path, 'module')
+            c4_level = self._determine_c4_level(NodeType.MODULE, relative_path, module_name, is_entry)
+            module_node = Node(
+                id=module_id,
+                type=NodeType.MODULE,
+                file=relative_path,
+                name=module_name,
+                metadata={"is_entry": is_entry, "c4_level": c4_level}
+            )
+            nodes.append(module_node)
+            
             # Load tree-sitter language
             lang = self._get_java_language()
             if not lang:
@@ -40,7 +53,8 @@ class JavaPlugin(LanguagePlugin):
             captures = self._execute_queries(lang, tree, content)
             
             # Process captures into nodes
-            nodes = self._process_captures(captures, content, relative_path, is_entry)
+            class_nodes = self._process_captures(captures, content, relative_path, is_entry)
+            nodes.extend(class_nodes)
             
         except Exception as e:
             logging.error(f"Failed to parse Java file {relative_path}: {e}")
@@ -69,7 +83,10 @@ class JavaPlugin(LanguagePlugin):
             core_queries = self.queries.get('core', [])
             for query_str in core_queries:
                 query = lang.query(query_str)
-                captures.update(query.captures(tree.root_node))
+                query_captures = query.captures(tree.root_node)
+                for capture_name, node in query_captures:
+                    if capture_name in captures:
+                        captures[capture_name].append(node)
                         
         except Exception as e:
             logging.warning(f"Query execution failed: {e}")

@@ -28,11 +28,25 @@ class PythonPlugin(LanguagePlugin):
         relative_path = str(file_path.relative_to(self.project_path))
         
         try:
+            # Create module node for the file
+            module_name = file_path.stem
+            module_id = self._generate_node_id(relative_path, 'module')
+            c4_level = self._determine_c4_level(NodeType.MODULE, relative_path, module_name, is_entry)
+            module_node = Node(
+                id=module_id,
+                type=NodeType.MODULE,
+                file=relative_path,
+                name=module_name,
+                metadata={"is_entry": is_entry, "c4_level": c4_level}
+            )
+            nodes.append(module_node)
+            
             # Parse with Python AST
             tree = ast.parse(content)
             
             # Process AST nodes
-            nodes = self._process_ast(tree, content, relative_path, is_entry)
+            function_nodes = self._process_ast(tree, content, relative_path, is_entry)
+            nodes.extend(function_nodes)
             
         except SyntaxError as e:
             logging.warning(f"Syntax error in Python file {relative_path}: {e}")

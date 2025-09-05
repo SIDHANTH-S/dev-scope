@@ -82,25 +82,25 @@ class LanguageParser:
         try:
             if ext in ['.js', '.jsx']:
                 try:
-                    from tree_sitter_javascript import LANGUAGE as JS_LANGUAGE_PKG  # type: ignore
-                    return JS_LANGUAGE_PKG
+                    import tree_sitter_javascript
+                    return tree_sitter_javascript.language()
                 except Exception:
                     return _load_from_compiled('javascript')
             if ext == '.ts':
                 try:
-                    from tree_sitter_typescript import LANGUAGE as TS_LANGUAGE_PKG  # type: ignore
-                    return TS_LANGUAGE_PKG
+                    import tree_sitter_typescript
+                    return tree_sitter_typescript.language()
                 except Exception:
                     return _load_from_compiled('typescript')
             if ext == '.tsx':
                 # Try TSX first, then fall back to TS
                 try:
-                    from tree_sitter_typescript import TSX_LANGUAGE as TSX_LANGUAGE_PKG  # type: ignore
-                    return TSX_LANGUAGE_PKG
+                    import tree_sitter_typescript
+                    return tree_sitter_typescript.language()
                 except Exception:
                     try:
-                        from tree_sitter_typescript import LANGUAGE as TS_LANGUAGE_PKG  # type: ignore
-                        return TS_LANGUAGE_PKG
+                        import tree_sitter_typescript
+                        return tree_sitter_typescript.language()
                     except Exception:
                         return _load_from_compiled('tsx') or _load_from_compiled('typescript')
         except Exception as e:
@@ -111,8 +111,8 @@ class LanguageParser:
         """Return a Tree-sitter language object for Java."""
         try:
             try:
-                from tree_sitter_java import LANGUAGE as JAVA_LANGUAGE_PKG  # type: ignore
-                return JAVA_LANGUAGE_PKG
+                import tree_sitter_java
+                return tree_sitter_java.language()
             except Exception:
                 return _load_from_compiled('java')
         except Exception as e:
@@ -231,6 +231,13 @@ class LanguageParser:
                 # Register nodes in the registry
                 for node in nodes:
                     self.node_registry[node.id] = node
+                    
+                # Store file symbols for semantic analysis
+                if hasattr(plugin, 'file_symbols') and plugin.file_symbols:
+                    self.file_symbols[relative_path] = plugin.file_symbols.get(relative_path, {})
+                    
+                # Create import edges
+                self._create_import_edges(relative_path, content, ext)
             else:
                 # Fallback for HTML files (not yet pluginized)
                 if ext == '.html':
@@ -247,6 +254,81 @@ class LanguageParser:
             if plugin.can_parse(ext):
                 return plugin
         return None
+    
+    def _create_import_edges(self, relative_path: str, content: str, ext: str):
+        """Create import edges for the file."""
+        try:
+            if ext in ['.js', '.jsx', '.ts', '.tsx']:
+                self._create_js_import_edges(relative_path, content)
+            elif ext == '.py':
+                self._create_python_import_edges(relative_path, content)
+        except Exception as e:
+            logging.error(f"Failed to create import edges for {relative_path}: {e}")
+    
+    def _create_js_import_edges(self, relative_path: str, content: str):
+        """Create import edges for JavaScript/TypeScript files."""
+        try:
+            lang = self._get_ts_language(Path(relative_path).suffix.lower())
+            if not lang:
+                return
+                
+            tree = lang.parse(bytes(content, 'utf-8'))
+            root = tree.root_node
+            
+            # Query for import statements
+            query = lang.query("(import_statement source: (string) @import_path)")
+            captures = query.captures(root)
+            
+            source_module_id = self._generate_node_id(relative_path, 'module')
+            
+            for node, _ in captures:
+                import_path = self._capture_text(content, node).strip().strip('"\'')
+                if import_path:
+                    target_rel = self._resolve_import_target(relative_path, import_path)
+                    if target_rel:
+                        target_module_id = self._generate_node_id(target_rel, 'module')
+                        
+                        # Create edge
+                        edge = Edge(
+                            source=source_module_id,
+                            target=target_module_id,
+                            type=EdgeType.DEPENDS_ON
+                        )
+                        self.edges.append(edge)
+        except Exception as e:
+            logging.error(f"Failed to create JS import edges for {relative_path}: {e}")
+    
+    def _create_python_import_edges(self, relative_path: str, content: str):
+        """Create import edges for Python files."""
+        try:
+            tree = ast.parse(content)
+            source_module_id = self._generate_node_id(relative_path, 'module')
+            
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        target_rel = self._resolve_import_target(relative_path, alias.name)
+                        if target_rel:
+                            target_module_id = self._generate_node_id(target_rel, 'module')
+                            edge = Edge(
+                                source=source_module_id,
+                                target=target_module_id,
+                                type=EdgeType.DEPENDS_ON
+                            )
+                            self.edges.append(edge)
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module:
+                        target_rel = self._resolve_import_target(relative_path, node.module)
+                        if target_rel:
+                            target_module_id = self._generate_node_id(target_rel, 'module')
+                            edge = Edge(
+                                source=source_module_id,
+                                target=target_module_id,
+                                type=EdgeType.DEPENDS_ON
+                            )
+                            self.edges.append(edge)
+        except Exception as e:
+            logging.error(f"Failed to create Python import edges for {relative_path}: {e}")
 
     
     def _parse_python_file(self, file_path: Path, relative_path: str, is_entry: bool):
