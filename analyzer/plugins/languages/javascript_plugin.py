@@ -1,3 +1,4 @@
+
 """
 JavaScript/TypeScript parsing plugin.
 """
@@ -185,6 +186,7 @@ class JavaScriptPlugin(LanguagePlugin):
     
     def _generate_node_id(self, file_path: str, name: str) -> str:
         """Generate a unique node ID using the same format as the main parser."""
+        
         content = f"{file_path}:{name}"
         hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
         return f"{file_path.replace('/', '_').replace('.', '_')}_{name}_{hash_suffix}"
