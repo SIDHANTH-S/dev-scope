@@ -21,9 +21,10 @@ class JavaPlugin(LanguagePlugin):
     def can_parse(self, file_extension: str) -> bool:
         return file_extension.lower() == '.java'
     
-    def parse(self, file_path: Path, content: str, is_entry: bool = False) -> List[Node]:
-        """Parse Java file and return nodes."""
+    def parse(self, file_path: Path, content: str, is_entry: bool = False) -> tuple[List[Node], Dict[str, Any]]:
+        """Parse Java file and return nodes and symbols."""
         nodes = []
+        symbols = {}
         relative_path = str(file_path.relative_to(self.project_path))
         
         try:
@@ -44,7 +45,7 @@ class JavaPlugin(LanguagePlugin):
             lang = self._get_java_language()
             if not lang:
                 logging.warning(f"Could not load Tree-sitter language for {file_path.suffix}")
-                return nodes
+                return nodes, symbols
             
             # Parse with tree-sitter
             tree = lang.parse(bytes(content, 'utf-8'))
@@ -56,10 +57,16 @@ class JavaPlugin(LanguagePlugin):
             class_nodes = self._process_captures(captures, content, relative_path, is_entry)
             nodes.extend(class_nodes)
             
+            # Create symbols dictionary
+            symbols = {
+                'declared': [node.name for node in class_nodes if node.name],
+                'imports': []  # Java imports would need separate parsing
+            }
+            
         except Exception as e:
             logging.error(f"Failed to parse Java file {relative_path}: {e}")
         
-        return nodes
+        return nodes, symbols
     
     def _get_java_language(self):
         """Get Java language for tree-sitter."""
@@ -143,9 +150,10 @@ class JavaPlugin(LanguagePlugin):
         return content[node.start_byte:node.end_byte]
     
     def _generate_node_id(self, file_path: str, name: str) -> str:
-        """Generate a unique node ID."""
+        """Generate a unique node ID using the same format as the main parser."""
         content = f"{file_path}:{name}"
-        return hashlib.md5(content.encode()).hexdigest()[:12]
+        hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
+        return f"{file_path.replace('/', '_').replace('.', '_')}_{name}_{hash_suffix}"
     
     def _determine_c4_level(self, node_type: NodeType, file_path: str, name: str, is_entry: bool = False) -> str:
         """Determine C4 model level for a node."""

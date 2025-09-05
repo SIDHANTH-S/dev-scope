@@ -22,9 +22,10 @@ class PythonPlugin(LanguagePlugin):
     def can_parse(self, file_extension: str) -> bool:
         return file_extension.lower() == '.py'
     
-    def parse(self, file_path: Path, content: str, is_entry: bool = False) -> List[Node]:
-        """Parse Python file and return nodes."""
+    def parse(self, file_path: Path, content: str, is_entry: bool = False) -> tuple[List[Node], Dict[str, Any]]:
+        """Parse Python file and return nodes and symbols."""
         nodes = []
+        symbols = {}
         relative_path = str(file_path.relative_to(self.project_path))
         
         try:
@@ -48,12 +49,31 @@ class PythonPlugin(LanguagePlugin):
             function_nodes = self._process_ast(tree, content, relative_path, is_entry)
             nodes.extend(function_nodes)
             
+            # Create symbols dictionary
+            symbols = {
+                'declared': [node.name for node in function_nodes if node.name],
+                'imports': self._extract_imports(tree)
+            }
+            
         except SyntaxError as e:
             logging.warning(f"Syntax error in Python file {relative_path}: {e}")
         except Exception as e:
             logging.error(f"Failed to parse Python file {relative_path}: {e}")
         
-        return nodes
+        return nodes, symbols
+    
+    def _extract_imports(self, tree: ast.AST) -> List[str]:
+        """Extract import statements from AST."""
+        imports = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports.append(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    for alias in node.names:
+                        imports.append(f"{node.module}.{alias.name}")
+        return imports
     
     def _process_ast(self, tree: ast.AST, content: str, relative_path: str, is_entry: bool) -> List[Node]:
         """Process Python AST and return nodes."""
@@ -82,9 +102,10 @@ class PythonPlugin(LanguagePlugin):
         return nodes
     
     def _generate_node_id(self, file_path: str, name: str) -> str:
-        """Generate a unique node ID."""
+        """Generate a unique node ID using the same format as the main parser."""
         content = f"{file_path}:{name}"
-        return hashlib.md5(content.encode()).hexdigest()[:12]
+        hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
+        return f"{file_path.replace('/', '_').replace('.', '_')}_{name}_{hash_suffix}"
     
     def _determine_c4_level(self, node_type: NodeType, file_path: str, name: str, is_entry: bool = False) -> str:
         """Determine C4 model level for a node."""

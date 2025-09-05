@@ -23,8 +23,8 @@ class LanguagePlugin(ABC):
         pass
     
     @abstractmethod
-    def parse(self, file_path: Path, content: str, is_entry: bool = False) -> List[Node]:
-        """Parse a file and return a list of nodes."""
+    def parse(self, file_path: Path, content: str, is_entry: bool = False) -> tuple[List[Node], Dict[str, Any]]:
+        """Parse a file and return a list of nodes and symbols."""
         pass
     
     def _load_queries(self) -> Dict[str, List[str]]:

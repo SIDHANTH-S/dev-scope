@@ -21,9 +21,10 @@ class JavaScriptPlugin(LanguagePlugin):
     def can_parse(self, file_extension: str) -> bool:
         return file_extension.lower() in ['.js', '.jsx', '.ts', '.tsx']
     
-    def parse(self, file_path: Path, content: str, is_entry: bool = False) -> List[Node]:
-        """Parse JavaScript/TypeScript file and return nodes."""
+    def parse(self, file_path: Path, content: str, is_entry: bool = False) -> tuple[List[Node], Dict[str, Any]]:
+        """Parse JavaScript/TypeScript file and return nodes and symbols."""
         nodes = []
+        symbols = {}
         relative_path = str(file_path.relative_to(self.project_path))
         
         try:
@@ -44,7 +45,7 @@ class JavaScriptPlugin(LanguagePlugin):
             lang = self._get_ts_language()
             if not lang:
                 logging.warning(f"Could not load Tree-sitter language for {file_path.suffix}")
-                return nodes
+                return nodes, symbols
             
             # Parse with tree-sitter
             tree = lang.parse(bytes(content, 'utf-8'))
@@ -56,17 +57,17 @@ class JavaScriptPlugin(LanguagePlugin):
             function_nodes = self._process_captures(captures, content, relative_path, file_path.suffix, is_entry)
             nodes.extend(function_nodes)
             
-            # Store file symbols for semantic analysis
-            self.file_symbols = getattr(self, 'file_symbols', {})
-            self.file_symbols[relative_path] = {
+            # Create symbols dictionary
+            symbols = {
                 'declared': [node.name for node in function_nodes if node.name],
-                'imports': [self._capture_text(content, node) for node in captures.get('import_path', [])]
+                'imports': [self._capture_text(content, node) for node in captures.get('import_path', [])],
+                'jsx_components': [self._capture_text(content, node) for node in captures.get('jsx_name', []) if self._capture_text(content, node) and self._capture_text(content, node)[0].isupper()]
             }
             
         except Exception as e:
             logging.error(f"Failed to parse JavaScript file {relative_path}: {e}")
         
-        return nodes
+        return nodes, symbols
     
     def _get_ts_language(self):
         """Get TypeScript/JavaScript language for tree-sitter."""
@@ -183,9 +184,10 @@ class JavaScriptPlugin(LanguagePlugin):
         return content[node.start_byte:node.end_byte]
     
     def _generate_node_id(self, file_path: str, name: str) -> str:
-        """Generate a unique node ID."""
+        """Generate a unique node ID using the same format as the main parser."""
         content = f"{file_path}:{name}"
-        return hashlib.md5(content.encode()).hexdigest()[:12]
+        hash_suffix = hashlib.md5(content.encode()).hexdigest()[:8]
+        return f"{file_path.replace('/', '_').replace('.', '_')}_{name}_{hash_suffix}"
     
     def _determine_c4_level(self, node_type: NodeType, file_path: str, name: str, is_entry: bool = False) -> str:
         """Determine C4 model level for a node."""

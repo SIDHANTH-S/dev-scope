@@ -222,31 +222,48 @@ class LanguageParser:
             # Mark as parsed before parsing to avoid recursion issues
             self.parsed_files.add(relative_path)
 
-            # Find appropriate language plugin
-            plugin = self._get_plugin_for_extension(ext)
-            if plugin:
-                nodes = plugin.parse(file_path, content, is_entry)
-                self.nodes.extend(nodes)
-                
-                # Register nodes in the registry
-                for node in nodes:
-                    self.node_registry[node.id] = node
-                    
-                # Store file symbols for semantic analysis
-                if hasattr(plugin, 'file_symbols') and plugin.file_symbols:
-                    self.file_symbols[relative_path] = plugin.file_symbols.get(relative_path, {})
-                    
-                # Create import edges
-                self._create_import_edges(relative_path, content, ext)
-            else:
+            # Find the correct plugin
+            plugin = self._find_plugin_for_file(file_path)
+            if not plugin:
+                logging.warning(f"No plugin found for file extension: {ext}")
                 # Fallback for HTML files (not yet pluginized)
                 if ext == '.html':
                     self._parse_html_file(file_path, relative_path, is_entry)
+                return
+
+            # Call the plugin's parse method
+            plugin_nodes, plugin_symbols = plugin.parse(file_path, content, is_entry)
+
+            # Integrate the results (This is the critical step that was failing)
+            if plugin_nodes:
+                self.nodes.extend(plugin_nodes)
+                for node in plugin_nodes:
+                    self.node_registry[node.id] = node
+
+            if plugin_symbols:
+                self.file_symbols[relative_path] = plugin_symbols
+                
+                # Create import edges from plugin symbols
+                for imp in plugin_symbols.get('imports', []):
+                    self._add_import_edge(relative_path, imp)
+
+            # Create import edges (fallback for non-plugin files)
+            self._create_import_edges(relative_path, content, ext)
+
+            logging.debug(f"Parsed {relative_path}: {len(plugin_nodes)} nodes created")
 
             # Update cache on successful parse
             self.file_cache[relative_path] = content_hash
         except Exception as e:
             logging.error(f"Failed to parse file {relative_path}: {e}")
+    
+    def _find_plugin_for_file(self, file_path: Path):
+        """Find the correct plugin for a file."""
+        ext = file_path.suffix.lower()
+        for plugin in self.language_plugins:
+            if plugin.can_parse(ext):
+                return plugin
+        return None
     
     def _get_plugin_for_extension(self, ext: str):
         """Get the appropriate language plugin for the file extension."""
@@ -283,18 +300,24 @@ class LanguageParser:
             
             for node, _ in captures:
                 import_path = self._capture_text(content, node).strip().strip('"\'')
-                if import_path:
+                if import_path and not import_path.startswith('.'):
+                    # Skip relative imports for now, focus on external dependencies
+                    continue
+                    
+                if import_path and import_path.startswith('.'):
                     target_rel = self._resolve_import_target(relative_path, import_path)
                     if target_rel:
                         target_module_id = self._generate_node_id(target_rel, 'module')
                         
-                        # Create edge
-                        edge = Edge(
-                            source=source_module_id,
-                            target=target_module_id,
-                            type=EdgeType.DEPENDS_ON
-                        )
-                        self.edges.append(edge)
+                        # Check if target module exists
+                        if target_module_id in self.node_registry:
+                            # Create edge
+                            edge = Edge(
+                                source=source_module_id,
+                                target=target_module_id,
+                                type=EdgeType.DEPENDS_ON
+                            )
+                            self.edges.append(edge)
         except Exception as e:
             logging.error(f"Failed to create JS import edges for {relative_path}: {e}")
     
@@ -310,23 +333,27 @@ class LanguageParser:
                         target_rel = self._resolve_import_target(relative_path, alias.name)
                         if target_rel:
                             target_module_id = self._generate_node_id(target_rel, 'module')
-                            edge = Edge(
-                                source=source_module_id,
-                                target=target_module_id,
-                                type=EdgeType.DEPENDS_ON
-                            )
-                            self.edges.append(edge)
+                            # Check if target module exists
+                            if target_module_id in self.node_registry:
+                                edge = Edge(
+                                    source=source_module_id,
+                                    target=target_module_id,
+                                    type=EdgeType.DEPENDS_ON
+                                )
+                                self.edges.append(edge)
                 elif isinstance(node, ast.ImportFrom):
                     if node.module:
                         target_rel = self._resolve_import_target(relative_path, node.module)
                         if target_rel:
                             target_module_id = self._generate_node_id(target_rel, 'module')
-                            edge = Edge(
-                                source=source_module_id,
-                                target=target_module_id,
-                                type=EdgeType.DEPENDS_ON
-                            )
-                            self.edges.append(edge)
+                            # Check if target module exists
+                            if target_module_id in self.node_registry:
+                                edge = Edge(
+                                    source=source_module_id,
+                                    target=target_module_id,
+                                    type=EdgeType.DEPENDS_ON
+                                )
+                                self.edges.append(edge)
         except Exception as e:
             logging.error(f"Failed to create Python import edges for {relative_path}: {e}")
 
@@ -728,7 +755,9 @@ class LanguageParser:
                 targets = [n for n in self.nodes if n.name == jsx_name and n.type == NodeType.COMPONENT]
                 for src in source_components:
                     for tgt in targets:
-                        self.edges.append(Edge(source=src.id, target=tgt.id, type=EdgeType.RENDERS))
+                        edge = Edge(source=src.id, target=tgt.id, type=EdgeType.RENDERS)
+                        self.edges.append(edge)
+                        logging.debug(f"Created RENDERS edge: {src.name} -> {tgt.name}")
 
         # CALLS: JS/TS
         for n in self.nodes:
@@ -745,9 +774,13 @@ class LanguageParser:
         try:
             target_rel = self._resolve_import_target(from_file, import_path)
             if not target_rel:
+                logging.debug(f"Could not resolve import target: {from_file} -> {import_path}")
                 return
+                
             source_module_id = self._generate_node_id(from_file, 'module')
             target_module_id = self._generate_node_id(target_rel, 'module')
+            
+            # Ensure source module exists
             if source_module_id not in self.node_registry:
                 src_name = Path(from_file).stem
                 c4_level = self._determine_c4_level(NodeType.MODULE, from_file, src_name, False)
@@ -760,6 +793,8 @@ class LanguageParser:
                 )
                 self.nodes.append(src_node)
                 self.node_registry[source_module_id] = src_node
+                
+            # Ensure target module exists
             if target_module_id not in self.node_registry:
                 tgt_name = Path(target_rel).stem
                 c4_level = self._determine_c4_level(NodeType.MODULE, target_rel, tgt_name, False)
@@ -772,7 +807,12 @@ class LanguageParser:
                 )
                 self.nodes.append(tgt_node)
                 self.node_registry[target_module_id] = tgt_node
-            self.edges.append(Edge(source=source_module_id, target=target_module_id, type=EdgeType.DEPENDS_ON))
+                
+            # Create the edge
+            edge = Edge(source=source_module_id, target=target_module_id, type=EdgeType.DEPENDS_ON)
+            self.edges.append(edge)
+            logging.debug(f"Created import edge: {from_file} -> {target_rel}")
+            
         except Exception as e:
             logging.exception(f"Failed to add import edge {from_file} -> {import_path}: {e}")
 
@@ -882,7 +922,9 @@ class LanguageParser:
             for called in called_names:
                 targets = [n for n in self.nodes if n.name == called]
                 for tgt in targets:
-                    self.edges.append(Edge(source=scope_node.id, target=tgt.id, type=EdgeType.CALLS))
+                    edge = Edge(source=scope_node.id, target=tgt.id, type=EdgeType.CALLS)
+                    self.edges.append(edge)
+                    logging.debug(f"Created CALLS edge: {scope_node.name} -> {tgt.name}")
         except Exception as e:
             logging.exception(f"JS calls analysis failed for {relative_path}: {e}")
     
@@ -905,7 +947,9 @@ class LanguageParser:
             for called in called_names:
                 targets = [n for n in self.nodes if n.name == called]
                 for tgt in targets:
-                    self.edges.append(Edge(source=scope_node.id, target=tgt.id, type=EdgeType.CALLS))
+                    edge = Edge(source=scope_node.id, target=tgt.id, type=EdgeType.CALLS)
+                    self.edges.append(edge)
+                    logging.debug(f"Created CALLS edge: {scope_node.name} -> {tgt.name}")
         except Exception as e:
             logging.exception(f"Python calls analysis failed for {relative_path}: {e}")
     
